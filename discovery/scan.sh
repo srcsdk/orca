@@ -1,5 +1,5 @@
 #!/bin/bash
-# ping every address in a subnet
+# ping sweep with mac address lookup
 
 if [ -z "$1" ]; then
     echo "usage: ./scan.sh <base_ip>"
@@ -9,9 +9,15 @@ fi
 
 count=0
 for i in $(seq 1 254); do
-    ping -c 1 -W 1 "$1.$i" > /dev/null 2>&1
+    ip="$1.$i"
+    ping -c 1 -W 1 "$ip" > /dev/null 2>&1
     if [ $? -eq 0 ]; then
-        echo "$1.$i is up"
+        mac=$(arp -n "$ip" 2>/dev/null | grep "$ip" | awk '{print $3}')
+        if [ -n "$mac" ] && [ "$mac" != "(incomplete)" ]; then
+            echo "$ip  $mac"
+        else
+            echo "$ip  (no mac)"
+        fi
         count=$((count + 1))
     fi
 done
