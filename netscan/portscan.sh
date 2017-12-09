@@ -1,5 +1,5 @@
 #!/bin/bash
-# tcp port scanner with parallel support
+# tcp port scanner
 
 show_usage() {
     echo "usage: ./portscan.sh [-c] [-t threads] [-o outfile] <host> [start] [end]"
@@ -9,6 +9,13 @@ show_usage() {
 }
 
 common_ports="21 22 23 25 53 80 110 111 135 139 143 443 445 993 995 1723 3306 3389 5900 8080"
+
+get_service() {
+    local port="$1"
+    local svc=$(grep -w "$port/tcp" /etc/services 2>/dev/null | head -1 | awk '{print $1}')
+    [ -z "$svc" ] && svc="unknown"
+    echo "$svc"
+}
 
 check_port() {
     local host="$1"
@@ -52,22 +59,29 @@ else
 fi
 
 echo ""
+printf "%-8s %-8s %s\n" "port" "state" "service"
+echo "------------------------------"
+
 results=$(echo "$ports" | tr ' ' '\n' | xargs -I{} -P "$threads" bash -c "check_port $host {}")
 open_ports=$(echo "$results" | sort -n | grep -v "^$")
 
+output=""
 if [ -z "$open_ports" ]; then
     echo "no open ports found"
 else
-    echo "$open_ports" | while read -r p; do
-        echo "$p/tcp open"
-    done
+    while read -r p; do
+        svc=$(get_service "$p")
+        line=$(printf "%-8s %-8s %s" "$p/tcp" "open" "$svc")
+        echo "$line"
+        output="$output$line\n"
+    done <<< "$open_ports"
 fi
 
 count=$(echo "$open_ports" | grep -c "\S")
 echo ""
-echo "$count open ports"
+echo "$count open ports on $host"
 
 if [ -n "$outfile" ]; then
-    echo "$open_ports" > "$outfile"
+    echo -e "$output" > "$outfile"
     echo "saved to $outfile"
 fi
