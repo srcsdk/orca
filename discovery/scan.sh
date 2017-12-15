@@ -6,7 +6,7 @@ show_usage() {
 }
 
 get_subnet() {
-    ip route | grep default | head -1 | awk '{print $3}' | sed 's/\.[0-9]*$//';
+    ip route | grep default | head -1 | awk '{print $3}' | sed 's/\.[0-9]*$//'
 }
 
 ping_host() {
@@ -15,7 +15,9 @@ ping_host() {
     if [ $? -eq 0 ]; then
         mac=$(arp -n "$ip" 2>/dev/null | grep "$ip" | awk '{print $3}')
         [ -z "$mac" ] || [ "$mac" = "(incomplete)" ] && mac="unknown"
-        printf "%-16s %s\n" "$ip" "$mac"
+        hostname=$(host "$ip" 2>/dev/null | grep "domain name pointer" | awk '{print $NF}' | sed 's/\.$//')
+        [ -z "$hostname" ] && hostname="-"
+        printf "%-16s %-18s %s\n" "$ip" "$mac" "$hostname"
     fi
 }
 
@@ -44,7 +46,8 @@ if [ -z "$subnet" ]; then
 fi
 
 echo "scanning $subnet.0/24 ($threads threads)..."
-echo ""
+printf "\n%-16s %-18s %s\n" "ip" "mac" "hostname"
+echo "------------------------------------------------"
 
 results=$(seq 1 254 | xargs -I{} -P "$threads" bash -c "ping_host $subnet.{}")
 echo "$results" | sort -t. -k4 -n
