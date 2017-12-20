@@ -1,5 +1,5 @@
 #!/bin/bash
-# dns lookup for a domain
+# dns enumeration for a domain
 
 if [ -z "$1" ]; then
     echo "usage: ./dns.sh <domain>"
@@ -8,21 +8,15 @@ fi
 
 domain="$1"
 
-echo "=== $domain ==="
-echo ""
-echo "A records:"
-dig +short "$domain" A 2>/dev/null | while read -r ip; do
-    echo "  $ip"
-done
+echo "=== dns enumeration: $domain ==="
 
-echo ""
-echo "MX records:"
-dig +short "$domain" MX 2>/dev/null | while read -r line; do
-    echo "  $line"
-done
-
-echo ""
-echo "NS records:"
-dig +short "$domain" NS 2>/dev/null | while read -r ns; do
-    echo "  $ns"
+for rtype in A AAAA MX NS TXT SOA CNAME SRV; do
+    result=$(dig +short "$domain" "$rtype" 2>/dev/null)
+    if [ -n "$result" ]; then
+        echo ""
+        echo "$rtype:"
+        echo "$result" | while read -r line; do
+            echo "  $line"
+        done
+    fi
 done
