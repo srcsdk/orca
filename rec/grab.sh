@@ -1,9 +1,8 @@
 #!/bin/bash
-# service banner grabber
+# service banner grabber and fingerprinter
 
 show_usage() {
-    echo "usage: ./grab.sh <host> <port> [port]..."
-    echo "       ./grab.sh -f <netscan_output> <host>"
+    echo "usage: ./grab.sh [-f netscan_output] [-o outfile] <host> [port]..."
 }
 
 grab_banner() {
@@ -13,32 +12,45 @@ grab_banner() {
 
     case "$port" in
         80|8080|8000|8888)
-            banner=$(echo -e "HEAD / HTTP/1.0\r\nHost: $host\r\n\r\n" | nc -w 3 "$host" "$port" 2>/dev/null | head -10)
+            banner=$(echo -e "HEAD / HTTP/1.0\r\nHost: $host\r\n\r\n" | nc -w 3 "$host" "$port" 2>/dev/null)
             ;;
         443|8443)
-            banner=$(echo -e "HEAD / HTTP/1.0\r\nHost: $host\r\n\r\n" | timeout 5 openssl s_client -connect "$host:$port" -quiet 2>/dev/null | head -10)
-            ;;
-        25|587)
-            banner=$(nc -w 3 "$host" "$port" 2>/dev/null | head -3)
+            banner=$(echo -e "HEAD / HTTP/1.0\r\nHost: $host\r\n\r\n" | timeout 5 openssl s_client -connect "$host:$port" -quiet 2>/dev/null)
             ;;
         *)
-            banner=$(echo "" | nc -w 3 "$host" "$port" 2>/dev/null | head -5)
+            banner=$(echo "" | nc -w 3 "$host" "$port" 2>/dev/null)
             ;;
     esac
 
-    if [ -n "$banner" ]; then
-        echo "[$host:$port]"
-        echo "$banner"
+    [ -z "$banner" ] && return
+
+    version=""
+    server=$(echo "$banner" | grep -i "^Server:" | head -1 | sed 's/Server: //i')
+    ssh_ver=$(echo "$banner" | grep -i "^SSH-" | head -1)
+    smtp_banner=$(echo "$banner" | grep -i "^220 " | head -1)
+    ftp_banner=$(echo "$banner" | grep -i "^220" | head -1)
+
+    if [ -n "$server" ]; then
+        version="$server"
+    elif [ -n "$ssh_ver" ]; then
+        version="$ssh_ver"
+    elif [ -n "$smtp_banner" ]; then
+        version="$smtp_banner"
+    elif [ -n "$ftp_banner" ]; then
+        version="$ftp_banner"
     else
-        echo "[$host:$port] no banner"
+        version=$(echo "$banner" | head -1)
     fi
-    echo ""
+
+    printf "%-8s %s\n" "$port/tcp" "$version"
 }
 
 from_file=""
-while getopts "f:h" opt; do
+outfile=""
+while getopts "f:o:h" opt; do
     case $opt in
         f) from_file="$OPTARG" ;;
+        o) outfile="$OPTARG" ;;
         h) show_usage; exit 0 ;;
         *) show_usage; exit 1 ;;
     esac
@@ -51,11 +63,27 @@ shift
 
 if [ -n "$from_file" ]; then
     ports=$(grep "open" "$from_file" | awk -F/ '{print $1}' | tr -d ' ')
-    for port in $ports; do
-        grab_banner "$host" "$port"
-    done
 else
-    for port in "$@"; do
-        grab_banner "$host" "$port"
-    done
+    ports="$@"
+fi
+
+[ -z "$ports" ] && { echo "no ports specified"; exit 1; }
+
+echo "grabbing banners from $host..."
+printf "\n%-8s %s\n" "port" "version"
+echo "----------------------------------------"
+
+output=""
+for port in $ports; do
+    line=$(grab_banner "$host" "$port")
+    if [ -n "$line" ]; then
+        echo "$line"
+        output="$output$line\n"
+    fi
+done
+
+if [ -n "$outfile" ]; then
+    echo -e "$output" > "$outfile"
+    echo ""
+    echo "saved to $outfile"
 fi
