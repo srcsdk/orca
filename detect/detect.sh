@@ -1,22 +1,25 @@
 #!/bin/bash
-# detect port scanning by watching connection attempts
+# network scan detection
 
 show_usage() {
-    echo "usage: ./detect.sh [-t threshold] [-w window] [-l logfile]"
-    echo "  -t  port threshold per source (default 15)"
-    echo "  -w  time window in seconds (default 10)"
-    echo "  -l  log alerts to file"
+    echo "usage: ./detect.sh [-t threshold] [-w window] [-l logfile] [-i iface]"
+    echo "  -t  port threshold (default 15)"
+    echo "  -w  time window seconds (default 10)"
+    echo "  -l  log file"
+    echo "  -i  interface"
 }
 
 threshold=15
 window=10
 logfile=""
+iface=""
 
-while getopts "t:w:l:h" opt; do
+while getopts "t:w:l:i:h" opt; do
     case $opt in
         t) threshold="$OPTARG" ;;
         w) window="$OPTARG" ;;
         l) logfile="$OPTARG" ;;
+        i) iface="$OPTARG" ;;
         h) show_usage; exit 0 ;;
         *) show_usage; exit 1 ;;
     esac
@@ -33,14 +36,26 @@ log_msg() {
     [ -n "$logfile" ] && echo "$msg" >> "$logfile"
 }
 
-log_msg "scan detector started (threshold: $threshold ports in ${window}s)"
+alert() {
+    local severity="$1"
+    local msg="$2"
+    log_msg "[$severity] $msg"
+}
+
+log_msg "scan detector started"
+log_msg "config: threshold=$threshold window=${window}s"
 
 declare -A src_ports
 declare -A src_first_seen
+declare -A alerted
 
-tcpdump -n -q --immediate-mode 'tcp[tcpflags] & tcp-syn != 0' 2>/dev/null | while read -r line; do
+cmd="tcpdump -n -l --immediate-mode"
+[ -n "$iface" ] && cmd="$cmd -i $iface"
+cmd="$cmd 'tcp[tcpflags] & tcp-syn != 0 and tcp[tcpflags] & tcp-ack == 0'"
+
+eval "$cmd" 2>/dev/null | while read -r line; do
     src_ip=$(echo "$line" | grep -oP '\d+\.\d+\.\d+\.\d+' | head -1)
-    dst_port=$(echo "$line" | grep -oP '(?<=\.)\d+:' | tail -1 | tr -d ':')
+    dst_port=$(echo "$line" | grep -oP '\.\d+:' | tail -1 | tr -d '.:'  )
 
     [ -z "$src_ip" ] || [ -z "$dst_port" ] && continue
 
@@ -49,14 +64,21 @@ tcpdump -n -q --immediate-mode 'tcp[tcpflags] & tcp-syn != 0' 2>/dev/null | whil
     if [ -z "${src_first_seen[$src_ip]}" ] || [ $((now - ${src_first_seen[$src_ip]})) -gt $window ]; then
         src_ports["$src_ip"]=""
         src_first_seen["$src_ip"]="$now"
+        unset alerted["$src_ip"]
     fi
 
     src_ports["$src_ip"]="${src_ports[$src_ip]} $dst_port"
     unique=$(echo "${src_ports[$src_ip]}" | tr ' ' '\n' | sort -u | grep -c "\S")
 
-    if [ "$unique" -ge "$threshold" ]; then
-        log_msg "[ALERT] port scan detected from $src_ip ($unique ports in ${window}s)"
-        src_ports["$src_ip"]=""
-        src_first_seen["$src_ip"]="$now"
+    if [ -n "${alerted[$src_ip]}" ]; then
+        continue
+    fi
+
+    if [ "$unique" -ge $((threshold * 3)) ]; then
+        alert "CRITICAL" "aggressive scan from $src_ip ($unique ports in ${window}s)"
+        alerted["$src_ip"]=1
+    elif [ "$unique" -ge "$threshold" ]; then
+        alert "WARNING" "possible scan from $src_ip ($unique ports in ${window}s)"
+        alerted["$src_ip"]=1
     fi
 done
