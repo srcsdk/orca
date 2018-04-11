@@ -2,43 +2,41 @@
 # arp monitor - detect spoofing and anomalies
 
 show_usage() {
-    echo "usage: ./watch.sh [-i interval] [-l logfile] [-g gateway]"
+    echo "usage: ./watch.sh [-i interval] [-l logfile] [-g gateway] [-b baseline]"
     echo "  -i  check interval in seconds (default 3)"
     echo "  -l  log to file"
-    echo "  -g  gateway ip to watch closely"
+    echo "  -g  gateway ip to watch"
+    echo "  -b  baseline file (save on first run, compare on subsequent)"
 }
 
 interval=3
 logfile=""
 gateway=""
-while getopts "i:l:g:h" opt; do
+baseline_file=""
+while getopts "i:l:g:b:h" opt; do
     case $opt in
         i) interval="$OPTARG" ;;
         l) logfile="$OPTARG" ;;
         g) gateway="$OPTARG" ;;
+        b) baseline_file="$OPTARG" ;;
         h) show_usage; exit 0 ;;
         *) show_usage; exit 1 ;;
     esac
 done
 
-if [ -z "$gateway" ]; then
-    gateway=$(ip route | grep default | head -1 | awk '{print $3}')
-fi
+[ -z "$gateway" ] && gateway=$(ip route | grep default | head -1 | awk '{print $3}')
 
 log_msg() {
-    local ts="$(date '+%Y-%m-%d %H:%M:%S')"
-    local msg="$ts $1"
+    local msg="$(date '+%Y-%m-%d %H:%M:%S') $1"
     echo "$msg"
     [ -n "$logfile" ] && echo "$msg" >> "$logfile"
 }
 
 alert() {
-    local msg="$1"
-    log_msg "[ALERT] $msg"
+    log_msg "[ALERT] $1"
 }
 
 declare -A known_hosts
-declare -A mac_ips
 
 parse_arp() {
     arp -n 2>/dev/null | tail -n +2 | while read -r ip type mac flags iface; do
@@ -47,16 +45,36 @@ parse_arp() {
     done
 }
 
-log_msg "arp monitor started"
-log_msg "gateway: $gateway"
-echo ""
+load_baseline() {
+    if [ -n "$baseline_file" ] && [ -f "$baseline_file" ]; then
+        while read -r ip mac; do
+            known_hosts["$ip"]="$mac"
+        done < "$baseline_file"
+        log_msg "loaded baseline: ${#known_hosts[@]} hosts from $baseline_file"
+        return 0
+    fi
+    return 1
+}
 
-while read -r ip mac; do
-    known_hosts["$ip"]="$mac"
-    mac_ips["$mac"]="${mac_ips[$mac]} $ip"
-done < <(parse_arp)
+save_baseline() {
+    if [ -n "$baseline_file" ]; then
+        for ip in "${!known_hosts[@]}"; do
+            echo "$ip ${known_hosts[$ip]}"
+        done | sort > "$baseline_file"
+        log_msg "saved baseline: ${#known_hosts[@]} hosts to $baseline_file"
+    fi
+}
 
-log_msg "baseline: ${#known_hosts[@]} hosts"
+log_msg "arp monitor started (gateway: $gateway)"
+
+if ! load_baseline; then
+    while read -r ip mac; do
+        known_hosts["$ip"]="$mac"
+    done < <(parse_arp)
+    log_msg "scanned baseline: ${#known_hosts[@]} hosts"
+    save_baseline
+fi
+
 log_msg "monitoring..."
 echo ""
 
@@ -65,24 +83,17 @@ while true; do
         if [ -z "${known_hosts[$ip]}" ]; then
             log_msg "new host: $ip ($mac)"
             known_hosts["$ip"]="$mac"
-            mac_ips["$mac"]="${mac_ips[$mac]} $ip"
+            save_baseline
         elif [ "${known_hosts[$ip]}" != "$mac" ]; then
-            old_mac="${known_hosts[$ip]}"
+            old="${known_hosts[$ip]}"
             if [ "$ip" = "$gateway" ]; then
-                alert "GATEWAY MAC CHANGED: $ip was $old_mac now $mac (possible arp spoof)"
+                alert "GATEWAY MAC CHANGED: $ip $old -> $mac (possible arp spoof)"
             else
-                alert "mac changed: $ip was $old_mac now $mac"
+                alert "mac changed: $ip $old -> $mac"
             fi
             known_hosts["$ip"]="$mac"
+            save_baseline
         fi
     done < <(parse_arp)
-
-    for mac in "${!mac_ips[@]}"; do
-        ip_count=$(echo "${mac_ips[$mac]}" | tr ' ' '\n' | sort -u | grep -c "\S")
-        if [ "$ip_count" -gt 2 ]; then
-            alert "mac $mac claims $ip_count ips: ${mac_ips[$mac]}"
-        fi
-    done
-
     sleep "$interval"
 done
