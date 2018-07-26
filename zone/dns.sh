@@ -2,23 +2,26 @@
 # dns reconnaissance
 
 show_usage() {
-    echo "usage: ./dns.sh [-z] [-r] [-b wordlist] [-o outfile] <domain>"
+    echo "usage: ./dns.sh [-z] [-r] [-b wordlist] [-w] [-o outfile] <domain>"
     echo "  -z  attempt zone transfer"
-    echo "  -r  reverse lookup all A records"
-    echo "  -b  brute force subdomains with wordlist"
+    echo "  -r  reverse lookup A records"
+    echo "  -b  brute force subdomains"
+    echo "  -w  include whois info"
     echo "  -o  output to file"
 }
 
 zone_transfer=0
 reverse=0
 wordlist=""
+whois_lookup=0
 outfile=""
 
-while getopts "zrb:o:h" opt; do
+while getopts "zrb:wo:h" opt; do
     case $opt in
         z) zone_transfer=1 ;;
         r) reverse=1 ;;
         b) wordlist="$OPTARG" ;;
+        w) whois_lookup=1 ;;
         o) outfile="$OPTARG" ;;
         h) show_usage; exit 0 ;;
         *) show_usage; exit 1 ;;
@@ -50,19 +53,26 @@ for rtype in A AAAA MX NS TXT SOA CNAME SRV; do
     fi
 done
 
+if [ $whois_lookup -eq 1 ] && command -v whois &>/dev/null; then
+    out "=== whois ==="
+    whois "$domain" 2>/dev/null | grep -iE '(registrar|creation|expir|name server|registrant|org)' | head -15 | while read -r line; do
+        out "  $line"
+    done
+    out ""
+fi
+
 if [ $zone_transfer -eq 1 ]; then
     out "=== zone transfer ==="
     for ns in $(dig +short "$domain" NS 2>/dev/null); do
         ns_clean=$(echo "$ns" | sed 's/\.$//')
-        out "trying $ns_clean..."
         result=$(dig @"$ns_clean" "$domain" AXFR +noall +answer 2>/dev/null)
         if [ -n "$result" ] && ! echo "$result" | grep -q "Transfer failed"; then
-            out "  success:"
+            out "  $ns_clean: success"
             echo "$result" | while read -r line; do
                 out "    $line"
             done
         else
-            out "  denied"
+            out "  $ns_clean: denied"
         fi
     done
     out ""
@@ -79,10 +89,7 @@ if [ $reverse -eq 1 ]; then
 fi
 
 if [ -n "$wordlist" ]; then
-    if [ ! -f "$wordlist" ]; then
-        echo "wordlist not found: $wordlist"
-        exit 1
-    fi
+    [ ! -f "$wordlist" ] && { echo "wordlist not found: $wordlist"; exit 1; }
     out "=== subdomain brute force ==="
     found=0
     while read -r sub; do
