@@ -2,9 +2,10 @@
 # network flow analysis
 
 show_usage() {
-    echo "usage: ./flow.sh [-i iface] [-c count] [-r pcap] [-t top_n] [-o outfile]"
-    echo "  -t  top N flows (default 20)"
-    echo "  -o  save report to file"
+    echo "usage: ./flow.sh [-i iface] [-c count] [-r pcap] [-t top_n] [-o outfile] [-p]"
+    echo "  -t  top N (default 20)"
+    echo "  -o  save report"
+    echo "  -p  include port analysis"
 }
 
 iface=""
@@ -12,14 +13,16 @@ count=1000
 readfile=""
 top_n=20
 outfile=""
+ports=0
 
-while getopts "i:c:r:t:o:h" opt; do
+while getopts "i:c:r:t:o:ph" opt; do
     case $opt in
         i) iface="$OPTARG" ;;
         c) count="$OPTARG" ;;
         r) readfile="$OPTARG" ;;
         t) top_n="$OPTARG" ;;
         o) outfile="$OPTARG" ;;
+        p) ports=1 ;;
         h) show_usage; exit 0 ;;
         *) show_usage; exit 1 ;;
     esac
@@ -48,53 +51,48 @@ fi
 total=$(wc -l < "$tmpfile")
 [ "$total" -eq 0 ] && { echo "no packets captured"; exit 1; }
 
-first_ts=$(head -1 "$tmpfile" | awk '{print $1}')
-last_ts=$(tail -1 "$tmpfile" | awk '{print $1}')
-
-out ""
-out "=== flow analysis ==="
-out "packets: $total"
-out "time range: $first_ts - $last_ts"
+out "=== flow analysis ($total packets) ==="
 out ""
 
 out "--- conversations (top $top_n) ---"
-out "$(printf '%-22s %-22s %-8s' 'source' 'destination' 'packets')"
-out "$(printf '%56s' '' | tr ' ' '-')"
+out "$(printf '%-22s %-22s %s' 'source' 'destination' 'packets')"
+out "$(printf '%54s' '' | tr ' ' '-')"
 
 awk '
     {
-        n=split($0, a, " ")
         src=""; dst=""
-        for(i=1; i<=n; i++) {
-            if(a[i] ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/) {
-                if(!src) src=a[i]
-                else { dst=a[i]; break }
+        for(i=1; i<=NF; i++) {
+            if($i ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/) {
+                if(!src) src=$i; else { dst=$i; break }
             }
         }
         if(src && dst) {
-            sub(/:$/, "", src)
-            sub(/:$/, "", dst)
+            sub(/:$/, "", src); sub(/:$/, "", dst)
             if(src > dst) { t=src; src=dst; dst=t }
-            convos[src" "dst]++
+            c[src" "dst]++
         }
     }
-    END { for(k in convos) print convos[k], k }
+    END { for(k in c) print c[k], k }
 ' "$tmpfile" | sort -rn | head -"$top_n" | while read -r cnt src dst; do
-    out "$(printf '%-22s %-22s %-8d' "$src" "$dst" "$cnt")"
+    out "$(printf '%-22s %-22s %d' "$src" "$dst" "$cnt")"
 done
 
 out ""
 out "--- protocols ---"
-tcp_c=$(grep -ci "tcp" "$tmpfile" 2>/dev/null || echo 0)
-udp_c=$(grep -ci "udp" "$tmpfile" 2>/dev/null || echo 0)
-icmp_c=$(grep -ci "icmp" "$tmpfile" 2>/dev/null || echo 0)
-arp_c=$(grep -ci "arp" "$tmpfile" 2>/dev/null || echo 0)
-
-for proto in "tcp:$tcp_c" "udp:$udp_c" "icmp:$icmp_c" "arp:$arp_c"; do
-    name="${proto%%:*}"
-    val="${proto##*:}"
-    [ "$val" -gt 0 ] && out "$(printf '  %-8s %6d (%d%%)' "$name" "$val" $((val * 100 / total)))"
+for proto in TCP UDP ICMP ARP DNS; do
+    c=$(grep -ci "$proto" "$tmpfile" 2>/dev/null || echo 0)
+    [ "$c" -gt 0 ] && out "$(printf '  %-8s %6d (%d%%)' "$proto" "$c" $((c * 100 / total)))"
 done
+
+if [ $ports -eq 1 ]; then
+    out ""
+    out "--- top destination ports ---"
+    grep -oP '\.\d+:' "$tmpfile" | tr -d '.:' | sort | uniq -c | sort -rn | head -10 | while read -r cnt port; do
+        svc=$(grep -w "$port/tcp" /etc/services 2>/dev/null | head -1 | awk '{print $1}')
+        [ -z "$svc" ] && svc="-"
+        out "$(printf '  %-8s %-12s %d' "$port" "$svc" "$cnt")"
+    done
+fi
 
 out ""
 out "--- top sources ---"
@@ -102,7 +100,6 @@ grep -oP '\d+\.\d+\.\d+\.\d+' "$tmpfile" | sort | uniq -c | sort -rn | head -10 
     out "$(printf '  %-20s %d' "$ip" "$cnt")"
 done
 
-out ""
-out "--- unique ips ---"
 unique=$(grep -oP '\d+\.\d+\.\d+\.\d+' "$tmpfile" | sort -u | wc -l)
-out "  $unique unique addresses"
+out ""
+out "$unique unique addresses observed"
