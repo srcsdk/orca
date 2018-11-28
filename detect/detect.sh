@@ -2,12 +2,13 @@
 # network scan detection and connection logging
 
 show_usage() {
-    echo "usage: ./detect.sh [-t threshold] [-w window] [-l logfile] [-i iface] [-s]"
+    echo "usage: ./detect.sh [-t threshold] [-w window] [-l logfile] [-i iface] [-s] [-b blocklist]"
     echo "  -t  port threshold (default 15)"
     echo "  -w  time window seconds (default 10)"
     echo "  -l  log file"
     echo "  -i  interface"
     echo "  -s  print stats on exit"
+    echo "  -b  export blocked ips to file (for use with iptables)"
 }
 
 threshold=15
@@ -15,16 +16,18 @@ window=10
 logfile=""
 iface=""
 show_stats=0
+blocklist=""
 total_packets=0
 total_alerts=0
 
-while getopts "t:w:l:i:sh" opt; do
+while getopts "t:w:l:i:sb:h" opt; do
     case $opt in
         t) threshold="$OPTARG" ;;
         w) window="$OPTARG" ;;
         l) logfile="$OPTARG" ;;
         i) iface="$OPTARG" ;;
         s) show_stats=1 ;;
+        b) blocklist="$OPTARG" ;;
         h) show_usage; exit 0 ;;
         *) show_usage; exit 1 ;;
     esac
@@ -43,9 +46,17 @@ log_msg() {
 
 alert() {
     local severity="$1"
-    local msg="$2"
+    local src="$2"
+    local msg="$3"
     log_msg "[$severity] $msg"
     total_alerts=$((total_alerts + 1))
+
+    if [ -n "$blocklist" ]; then
+        if ! grep -q "^$src$" "$blocklist" 2>/dev/null; then
+            echo "$src" >> "$blocklist"
+            log_msg "added $src to blocklist"
+        fi
+    fi
 }
 
 print_stats() {
@@ -54,19 +65,20 @@ print_stats() {
     echo "packets analyzed: $total_packets"
     echo "alerts generated: $total_alerts"
     echo "unique sources:   ${#src_first_seen[@]}"
+    if [ -n "$blocklist" ] && [ -f "$blocklist" ]; then
+        echo "blocked ips:      $(wc -l < "$blocklist")"
+    fi
 }
 
-if [ $show_stats -eq 1 ]; then
-    trap print_stats EXIT
-fi
+[ $show_stats -eq 1 ] && trap print_stats EXIT
 
 log_msg "scan detector started"
 log_msg "config: threshold=$threshold window=${window}s"
+[ -n "$blocklist" ] && log_msg "blocklist: $blocklist"
 
 declare -A src_ports
 declare -A src_first_seen
 declare -A alerted
-declare -A alert_count
 
 cmd="tcpdump -n -l --immediate-mode"
 [ -n "$iface" ] && cmd="$cmd -i $iface"
@@ -94,12 +106,10 @@ eval "$cmd" 2>/dev/null | while read -r line; do
     [ -n "${alerted[$src_ip]}" ] && continue
 
     if [ "$unique" -ge $((threshold * 3)) ]; then
-        alert "CRITICAL" "aggressive scan from $src_ip -> $dst_ip ($unique ports in ${window}s)"
+        alert "CRITICAL" "$src_ip" "aggressive scan from $src_ip -> $dst_ip ($unique ports in ${window}s)"
         alerted["$src_ip"]=1
-        alert_count["$src_ip"]=$(( ${alert_count[$src_ip]:-0} + 1 ))
     elif [ "$unique" -ge "$threshold" ]; then
-        alert "WARNING" "possible scan from $src_ip -> $dst_ip ($unique ports in ${window}s)"
+        alert "WARNING" "$src_ip" "possible scan from $src_ip -> $dst_ip ($unique ports in ${window}s)"
         alerted["$src_ip"]=1
-        alert_count["$src_ip"]=$(( ${alert_count[$src_ip]:-0} + 1 ))
     fi
 done
