@@ -134,6 +134,8 @@ def main():
                         help="save results to json file")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="verbose output")
+    parser.add_argument("-j", "--json", action="store_true",
+                        help="output results as formatted json to stdout")
 
     args = parser.parse_args()
 
@@ -161,8 +163,18 @@ def main():
     results = discover(args.target, args.threads, args.timeout)
     elapsed = time.time() - start
 
-    print_results(results, args.verbose)
-    print(f"completed in {elapsed:.1f}s")
+    if args.json:
+        data = {
+            "target": args.target,
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "elapsed": round(elapsed, 2),
+            "host_count": len(results),
+            "hosts": results
+        }
+        print(json.dumps(data, indent=2))
+    else:
+        print_results(results, args.verbose)
+        print(f"completed in {elapsed:.1f}s")
 
     if args.output:
         data = {
