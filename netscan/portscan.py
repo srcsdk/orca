@@ -165,8 +165,14 @@ def main():
                         help="save results to json file")
     parser.add_argument("--timeout", type=float, default=1,
                         help="timeout per port (default: 1)")
+    parser.add_argument("--slow", action="store_true",
+                        help="slow host mode: higher timeouts and fewer threads")
 
     args = parser.parse_args()
+
+    if args.slow:
+        args.timeout = max(args.timeout, 3)
+        args.threads = min(args.threads, 20)
 
     # resolve hostname
     try:
