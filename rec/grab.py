@@ -129,6 +129,48 @@ def parse_banner(banner):
     return {"product": "unknown", "version": banner[:60]}
 
 
+def analyze_http_headers(host, port=80, timeout=3):
+    """check http response headers for security misconfigurations"""
+    security_headers = [
+        "strict-transport-security",
+        "content-security-policy",
+        "x-frame-options",
+        "x-content-type-options",
+        "x-xss-protection",
+        "referrer-policy",
+    ]
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        sock.connect((host, port))
+        request = f"HEAD / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+        sock.sendall(request.encode())
+        response = sock.recv(4096).decode("utf-8", errors="replace")
+        sock.close()
+
+        headers = {}
+        for line in response.split("\r\n")[1:]:
+            if ":" in line:
+                key, value = line.split(":", 1)
+                headers[key.strip().lower()] = value.strip()
+
+        missing = []
+        present = []
+        for h in security_headers:
+            if h in headers:
+                present.append(h)
+            else:
+                missing.append(h)
+
+        return {
+            "headers": headers,
+            "security_present": present,
+            "security_missing": missing,
+        }
+    except (socket.timeout, ConnectionRefusedError, OSError):
+        return None
+
+
 def fingerprint(host, port, timeout=3):
     """full fingerprint of a service"""
     result = {
@@ -168,6 +210,8 @@ def main():
                         help="timeout (default: 3)")
     parser.add_argument("-o", "--output", type=str,
                         help="save results to json")
+    parser.add_argument("--headers", action="store_true",
+                        help="analyze http security headers")
 
     args = parser.parse_args()
 
@@ -213,6 +257,17 @@ def main():
             if s.get("subject"):
                 print(f"  cn:      {s['subject'].get('commonName', '')}")
         print()
+
+    if args.headers:
+        for port in [80, 8080, 443, 8443]:
+            if port in [int(p) for p in args.ports.split(",") if p.strip().isdigit()]:
+                analysis = analyze_http_headers(ip, port, args.timeout)
+                if analysis:
+                    print(f"http header analysis ({port}):")
+                    if analysis["security_present"]:
+                        print(f"  present: {', '.join(analysis['security_present'])}")
+                    if analysis["security_missing"]:
+                        print(f"  missing: {', '.join(analysis['security_missing'])}")
 
     if args.output:
         with open(args.output, "w") as f:
