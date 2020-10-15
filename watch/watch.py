@@ -2,6 +2,7 @@
 """arp spoofing detection and monitoring"""
 
 import argparse
+import csv
 import json
 import os
 import signal
@@ -167,6 +168,8 @@ def main():
                         help="show current arp table and exit")
     parser.add_argument("-o", "--output", type=str,
                         help="save alerts to json file")
+    parser.add_argument("--csv", type=str,
+                        help="export alerts to csv file")
 
     args = parser.parse_args()
 
@@ -186,6 +189,17 @@ def main():
         with open(args.output, "w") as f:
             json.dump(monitor.alerts, f, indent=2)
         print(f"saved {len(monitor.alerts)} alerts to {args.output}")
+
+    if args.csv and monitor.alerts:
+        fieldnames = ["timestamp", "type", "severity", "ip", "mac",
+                       "expected", "observed"]
+        with open(args.csv, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames,
+                                    extrasaction="ignore")
+            writer.writeheader()
+            for alert in monitor.alerts:
+                writer.writerow(alert)
+        print(f"exported {len(monitor.alerts)} alerts to {args.csv}")
 
 
 if __name__ == "__main__":
