@@ -7,19 +7,18 @@ centralized log collection and normalization. tails multiple log files, normaliz
 ```
 ./logma.sh -f /var/log/syslog -f /var/log/auth.log     # monitor specific files
 ./logma.sh -d /var/log/ -n                               # normalize all logs in dir
-./logma.sh -f /var/log/syslog -o combined.log            # output to file
+
+python3 logma.py -f /var/log/syslog -f /var/log/auth.log  # collect and normalize
+python3 logma.py -d /var/log/ --tail                       # tail directory
+python3 logma.py -f syslog -o normalized.json              # json output to file
+python3 logma.py -f syslog --text                          # human-readable output
 ```
-
-### options
-
-- `-f` : log file to monitor (repeatable)
-- `-d` : directory containing .log files
-- `-o` : output file (default: stdout)
-- `-n` : normalize timestamps to iso format
 
 ### features
 
-- syslog, apache, nginx timestamp parsing
-- severity extraction (critical, error, warning, info)
-- real-time tailing with source tracking
-- combined output stream with source labels
+- syslog, apache, nginx, json log format parsing
+- automatic timestamp normalization to iso format
+- severity extraction (critical, error, warning, info, debug)
+- real-time tailing with file rotation detection
+- json and text output modes
+- per-source statistics
