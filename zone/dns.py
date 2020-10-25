@@ -13,19 +13,27 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 RECORD_TYPES = ["A", "AAAA", "MX", "NS", "TXT", "SOA", "CNAME", "SRV"]
 
 
-def dig_query(domain, rtype, server=None, timeout=5):
-    """query dns records using dig"""
+def dig_query(domain, rtype, server=None, timeout=5, retries=2):
+    """query dns records using dig with retry on failure"""
     cmd = ["dig", "+short", "+time={}".format(timeout), domain, rtype]
     if server:
         cmd.insert(1, f"@{server}")
-    try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout + 2
-        )
-        lines = [l.strip() for l in result.stdout.strip().split("\n") if l.strip()]
-        return lines
-    except (subprocess.TimeoutExpired, OSError):
-        return []
+
+    for attempt in range(retries + 1):
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=timeout + 2
+            )
+            lines = [l.strip() for l in result.stdout.strip().split("\n")
+                     if l.strip()]
+            if lines or attempt == retries:
+                return lines
+            time.sleep(1)
+        except (subprocess.TimeoutExpired, OSError):
+            if attempt == retries:
+                return []
+            time.sleep(1)
+    return []
 
 
 def enumerate_records(domain, server=None):
