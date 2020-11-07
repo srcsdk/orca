@@ -151,6 +151,31 @@ class PacketAnalyzer:
             print(f"  {pair:<40} {conv['packets']}")
 
 
+def export_pcap(analyzer, output_file):
+    """export captured data to a simplified text format.
+
+    writes packet summaries to a file for later analysis
+    or import into other tools.
+    """
+    if not analyzer.packets:
+        print("no packets to export", file=sys.stderr)
+        return False
+
+    with open(output_file, "w") as f:
+        f.write(f"# packet export - {datetime.now().isoformat()}\n")
+        f.write(f"# total packets: {len(analyzer.packets)}\n\n")
+
+        for i, pkt in enumerate(analyzer.packets):
+            src = pkt.get("src", "unknown")
+            dst = pkt.get("dst", "unknown")
+            proto = pkt.get("proto", "?")
+            raw = pkt.get("raw", "")
+            f.write(f"{i+1}\t{proto}\t{src}\t{dst}\t{raw[:120]}\n")
+
+    print(f"exported {len(analyzer.packets)} packets to {output_file}")
+    return True
+
+
 def analyze_pcap(filename):
     """analyze an existing pcap file"""
     cmd = ["tcpdump", "-nn", "-r", filename, "-tttt"]
@@ -180,6 +205,8 @@ def main():
                         help="write packets to pcap file")
     parser.add_argument("-r", "--read", type=str,
                         help="read and analyze existing pcap")
+    parser.add_argument("-e", "--export", type=str,
+                        help="export packets to text file")
     parser.add_argument("-o", "--output", type=str,
                         help="save stats to json")
 
@@ -195,6 +222,8 @@ def main():
                 with open(args.output, "w") as f:
                     json.dump(analyzer.stats(), f, indent=2)
                 print(f"\nsaved stats to {args.output}")
+            if args.export:
+                export_pcap(analyzer, args.export)
         return
 
     # live capture
@@ -238,6 +267,9 @@ def main():
 
     proc.wait()
     analyzer.print_stats()
+
+    if args.export:
+        export_pcap(analyzer, args.export)
 
     if args.output:
         with open(args.output, "w") as f:
