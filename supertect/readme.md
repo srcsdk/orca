@@ -7,20 +7,19 @@ event correlation and alert engine. scans multiple log files for attack patterns
 ```
 ./supertect.sh -f /var/log/auth.log -f /var/log/syslog   # scan multiple logs
 ./supertect.sh -f auth.log -w 600 -r rules.txt           # custom window and rules
-./supertect.sh -f auth.log -o alerts.log                  # write alerts to file
+
+python3 supertect.py -f auth.log -f syslog               # multi-file correlation
+python3 supertect.py -f auth.log -r sigma_rules/ --json   # sigma rules with json
+python3 supertect.py -f auth.log --tail                    # real-time monitoring
+python3 supertect.py -f auth.log -o report.json            # save report
 ```
-
-### options
-
-- `-f` : log file to analyze (repeatable)
-- `-w` : correlation time window in seconds (default: 300)
-- `-r` : rules file with grep patterns
-- `-o` : alert output file
 
 ### features
 
-- multi-file pattern matching
-- time-window correlation
-- severity classification (critical, high, medium, low)
-- brute force detection
-- alert deduplication
+- multi-source event correlation
+- sigma-compatible rule format (yaml)
+- time-window analysis with configurable windows
+- severity scoring (critical, high, medium, low)
+- cross-source pattern correlation
+- alert deduplication with configurable windows
+- brute force and privilege escalation detection
