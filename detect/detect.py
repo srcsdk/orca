@@ -249,3 +249,40 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# configurable thresholds can be loaded from a json file
+DEFAULT_THRESHOLDS = {
+    "port_scan": {"low": 15, "medium": 25, "high": 50, "critical": 100},
+    "syn_flood": {"low": 30, "medium": 50, "high": 100, "critical": 200},
+    "rate_pps": {"low": 10, "medium": 20, "high": 50, "critical": 100},
+}
+
+
+def load_thresholds(config_file):
+    """load alert thresholds from a json config file.
+
+    falls back to defaults if file is missing or invalid.
+    """
+    if not config_file or not os.path.exists(config_file):
+        return DEFAULT_THRESHOLDS
+
+    try:
+        with open(config_file, "r") as f:
+            custom = json.load(f)
+        merged = dict(DEFAULT_THRESHOLDS)
+        for key in custom:
+            if key in merged:
+                merged[key].update(custom[key])
+        return merged
+    except (json.JSONDecodeError, ValueError) as e:
+        print(f"invalid threshold config: {e}", file=sys.stderr)
+        return DEFAULT_THRESHOLDS
+
+
+def apply_thresholds(detector, thresholds):
+    """apply loaded thresholds to a scan detector instance"""
+    port_th = thresholds.get("port_scan", {})
+    detector.port_threshold = port_th.get("medium", detector.port_threshold)
+    rate_th = thresholds.get("syn_flood", {})
+    detector.rate_threshold = rate_th.get("medium", detector.rate_threshold)
