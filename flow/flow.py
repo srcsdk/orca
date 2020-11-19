@@ -259,3 +259,49 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def conversation_durations(tracker):
+    """calculate duration stats for all bidirectional conversations.
+
+    returns a list of conversations with timing information
+    sorted by total duration descending.
+    """
+    results = []
+    for key, conv in tracker.bidirectional.items():
+        # find matching flows to get timing
+        total_packets = conv["forward"] + conv["reverse"]
+        endpoints = conv["endpoints"]
+        proto = conv["proto"]
+
+        # look up actual flow objects for timing data
+        best_duration = 0
+        for fkey, flow in tracker.flows.items():
+            if (flow.src_ip in endpoints and flow.dst_ip in endpoints
+                    and flow.proto == proto):
+                if flow.duration > best_duration:
+                    best_duration = flow.duration
+
+        results.append({
+            "endpoints": endpoints,
+            "proto": proto,
+            "packets": total_packets,
+            "duration_seconds": round(best_duration, 2),
+            "forward": conv["forward"],
+            "reverse": conv["reverse"],
+        })
+
+    results.sort(key=lambda c: c["duration_seconds"], reverse=True)
+    return results
+
+
+def print_conversation_durations(tracker, limit=10):
+    """display conversation duration report"""
+    durations = conversation_durations(tracker)
+    print(f"\nconversation durations (top {limit}):")
+    for conv in durations[:limit]:
+        ep = " <-> ".join(conv["endpoints"])
+        dur = conv["duration_seconds"]
+        pkts = conv["packets"]
+        print(f"  {ep} ({conv['proto']}) "
+              f"{dur:.1f}s {pkts} pkts")
