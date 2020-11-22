@@ -7,20 +7,21 @@ data loss prevention and exfiltration detection. monitors outbound traffic for h
 ```
 ./tropy.sh -i eth0 -m all                  # full dlp scan
 ./tropy.sh -m traffic -t 500               # check volume with 500MB threshold
-./tropy.sh -m dns -i wlan0                 # dns tunneling detection
-./tropy.sh -m patterns -o alerts.log       # pattern scan with alert output
+
+python3 tropy.py -m all                                    # full dlp scan
+python3 tropy.py -m content -f sensitive.csv               # scan file for pii
+python3 tropy.py -m volume -i eth0 --volume 500            # volume anomalies
+python3 tropy.py -m processes --json                       # process audit
 ```
-
-### options
-
-- `-i` : network interface (default: eth0)
-- `-m` : mode (traffic, dns, patterns, all)
-- `-t` : volume threshold in MB (default: 100)
-- `-o` : alert output file
 
 ### detections
 
-- outbound traffic volume anomalies
-- dns tunneling via long subdomain labels
-- base64 encoded data in process arguments
-- credit card number patterns in logs
+- credit card numbers (luhn validated)
+- ssn patterns
+- api keys and aws credentials
+- private key material
+- shannon entropy analysis for encrypted/encoded data
+- base64 block detection
+- dns tunneling indicators (label length, entropy, query rate)
+- outbound traffic volume and ratio anomalies
+- process command line scanning
