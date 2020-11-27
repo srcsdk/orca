@@ -190,3 +190,44 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def guess_os_from_ttl(ip, timeout=1):
+    """guess remote os based on icmp ttl value.
+
+    common defaults:
+      linux/unix: 64
+      windows: 128
+      cisco/network: 255
+      solaris: 254
+    """
+    try:
+        result = subprocess.run(
+            ["ping", "-c", "1", "-W", str(timeout), str(ip)],
+            capture_output=True, text=True, timeout=timeout + 2
+        )
+        if result.returncode != 0:
+            return None
+
+        for line in result.stdout.split("\n"):
+            if "ttl=" in line.lower():
+                import re
+                match = re.search(r"ttl=(\d+)", line, re.IGNORECASE)
+                if match:
+                    ttl = int(match.group(1))
+                    return classify_ttl(ttl)
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    return None
+
+
+def classify_ttl(ttl):
+    """classify os family from ttl value"""
+    if ttl <= 64:
+        return {"ttl": ttl, "os_hint": "linux/unix", "confidence": "medium"}
+    elif ttl <= 128:
+        return {"ttl": ttl, "os_hint": "windows", "confidence": "medium"}
+    elif ttl <= 254:
+        return {"ttl": ttl, "os_hint": "solaris/aix", "confidence": "low"}
+    else:
+        return {"ttl": ttl, "os_hint": "cisco/network", "confidence": "low"}
