@@ -216,3 +216,41 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# well-known service ports grouped by category for quick scans
+TOP_PORTS_WEB = [80, 443, 8080, 8443, 8000, 8888, 3000, 9443]
+TOP_PORTS_MAIL = [25, 110, 143, 465, 587, 993, 995]
+TOP_PORTS_DB = [1433, 1521, 3306, 5432, 6379, 27017, 9200]
+TOP_PORTS_REMOTE = [22, 23, 3389, 5900, 5985, 2222]
+TOP_PORTS_FILE = [21, 69, 445, 2049, 873]
+
+PRESETS = {
+    "web": TOP_PORTS_WEB,
+    "mail": TOP_PORTS_MAIL,
+    "db": TOP_PORTS_DB,
+    "database": TOP_PORTS_DB,
+    "remote": TOP_PORTS_REMOTE,
+    "file": TOP_PORTS_FILE,
+    "quick": sorted(set(
+        TOP_PORTS_WEB + TOP_PORTS_REMOTE + [53, 445, 3306]
+    )),
+}
+
+
+def get_preset_ports(preset_name):
+    """get port list for a named preset.
+
+    available presets: web, mail, db, remote, file, quick.
+    returns none if preset not found.
+    """
+    return PRESETS.get(preset_name.lower())
+
+
+def list_presets():
+    """print available port presets and their port lists"""
+    for name, ports in sorted(PRESETS.items()):
+        port_str = ", ".join(str(p) for p in ports[:10])
+        if len(ports) > 10:
+            port_str += f" ... ({len(ports)} total)"
+        print(f"  {name:<10} {port_str}")
