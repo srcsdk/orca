@@ -151,3 +151,42 @@ if __name__ == "__main__":
             sev = r["severity"].upper()
             print(f"  [{sev}] {r['cve']} (CVSS {r['score']})")
             print(f"    {r['description'][:80]}")
+
+
+SEVERITY_LEVELS = ["critical", "high", "medium", "low", "unknown"]
+
+
+def filter_by_severity(results, min_severity="low"):
+    """filter cve results by minimum severity level.
+
+    severity order: critical > high > medium > low > unknown.
+    returns only results at or above the specified threshold.
+    """
+    if min_severity not in SEVERITY_LEVELS:
+        return results
+
+    threshold = SEVERITY_LEVELS.index(min_severity)
+    filtered = []
+    for r in results:
+        sev = r.get("severity", "unknown").lower()
+        if sev in SEVERITY_LEVELS:
+            idx = SEVERITY_LEVELS.index(sev)
+            if idx <= threshold:
+                filtered.append(r)
+        else:
+            filtered.append(r)
+    return filtered
+
+
+def filter_by_score(results, min_score=0.0):
+    """filter cve results by minimum cvss score"""
+    return [r for r in results if r.get("score", 0) >= min_score]
+
+
+def sort_by_severity(results):
+    """sort results by severity (critical first) then by score"""
+    def sort_key(r):
+        sev = r.get("severity", "unknown").lower()
+        idx = SEVERITY_LEVELS.index(sev) if sev in SEVERITY_LEVELS else 99
+        return (idx, -r.get("score", 0))
+    return sorted(results, key=sort_key)
