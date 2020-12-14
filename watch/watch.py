@@ -204,3 +204,48 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+class HostNotifier:
+    """send notifications when new hosts appear on the network"""
+
+    def __init__(self, log_file=None):
+        self.log_file = log_file
+        self.notified = set()
+
+    def notify_new_host(self, ip, mac, timestamp=None):
+        """log and print notification for a newly discovered host"""
+        if ip in self.notified:
+            return
+
+        ts = timestamp or datetime.now().isoformat()
+        msg = f"new host detected: {ip} ({mac}) at {ts}"
+        print(f"  [NEW] {msg}")
+
+        if self.log_file:
+            self.write_log(msg)
+        self.notified.add(ip)
+
+    def notify_mac_change(self, ip, old_mac, new_mac, timestamp=None):
+        """log and print notification for a mac address change"""
+        ts = timestamp or datetime.now().isoformat()
+        msg = f"mac change on {ip}: {old_mac} -> {new_mac} at {ts}"
+        print(f"  [CHANGE] {msg}")
+
+        if self.log_file:
+            self.write_log(msg)
+
+    def write_log(self, message):
+        """append a notification to the log file"""
+        try:
+            with open(self.log_file, "a") as f:
+                f.write(message + "\n")
+        except OSError as e:
+            print(f"log write error: {e}", file=sys.stderr)
+
+    def summary(self):
+        """return notification statistics"""
+        return {
+            "hosts_notified": len(self.notified),
+            "log_file": self.log_file,
+        }
