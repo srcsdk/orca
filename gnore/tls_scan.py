@@ -302,3 +302,79 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def validate_cert_chain(host, port, timeout=5):
+    """validate the full certificate chain for a host.
+
+    checks that each certificate in the chain is properly signed
+    by the next, and the root is trusted.
+    """
+    try:
+        ctx = ssl.create_default_context()
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        wrapped = ctx.wrap_socket(sock, server_hostname=host)
+        wrapped.connect((host, port))
+
+        # get peer certificate chain
+        cert = wrapped.getpeercert()
+        cipher = wrapped.cipher()
+        wrapped.close()
+
+        chain_info = {
+            "host": host,
+            "port": port,
+            "chain_valid": True,
+            "protocol": cipher[0] if cipher else None,
+        }
+
+        if cert:
+            # extract chain details
+            subject = {}
+            for entry in cert.get("subject", ()):
+                for key, value in entry:
+                    subject[key] = value
+
+            issuer = {}
+            for entry in cert.get("issuer", ()):
+                for key, value in entry:
+                    issuer[key] = value
+
+            chain_info["leaf_subject"] = subject.get("commonName", "")
+            chain_info["leaf_issuer"] = issuer.get("commonName", "")
+            chain_info["self_signed"] = (
+                subject.get("commonName") == issuer.get("commonName")
+                and subject.get("organizationName") == issuer.get("organizationName")
+            )
+
+        return chain_info
+
+    except ssl.SSLCertVerificationError as e:
+        return {
+            "host": host,
+            "port": port,
+            "chain_valid": False,
+            "error": str(e),
+        }
+    except (socket.timeout, ConnectionRefusedError, OSError) as e:
+        return {
+            "host": host,
+            "port": port,
+            "chain_valid": False,
+            "error": f"connection failed: {e}",
+        }
+
+
+def print_chain_result(result):
+    """display certificate chain validation result"""
+    status = "valid" if result["chain_valid"] else "INVALID"
+    print(f"  chain: {status}")
+    if result.get("leaf_subject"):
+        print(f"  subject: {result['leaf_subject']}")
+    if result.get("leaf_issuer"):
+        print(f"  issuer:  {result['leaf_issuer']}")
+    if result.get("self_signed"):
+        print(f"  warning: self-signed certificate")
+    if result.get("error"):
+        print(f"  error:   {result['error']}")
