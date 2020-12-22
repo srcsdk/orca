@@ -7,21 +7,21 @@ production server hardening checks based on cis benchmarks. audits ssh configura
 ```
 ./prodsec.sh -m all                    # full audit
 ./prodsec.sh -m ssh                    # ssh config checks
-./prodsec.sh -m perms                  # file permission audit
-./prodsec.sh -m services              # service audit
-./prodsec.sh -m password -o report.txt # password policy with report
+
+python3 prodsec.py -m all                              # full cis audit
+python3 prodsec.py -m ssh --json                       # ssh checks json
+python3 prodsec.py --save-baseline baseline.json       # save baseline
+python3 prodsec.py --baseline baseline.json            # detect drift
+python3 prodsec.py -m privesc                          # privilege escalation paths
 ```
-
-### options
-
-- `-m` : mode (ssh, perms, services, password, all)
-- `-o` : output report file
 
 ### checks
 
-- ssh hardening (root login, protocol, auth methods)
+- ssh hardening (12 cis checks: root login, protocol, auth, banners)
 - file permissions (passwd, shadow, world-writable, suid)
-- risky services (telnet, rsh, cups)
-- firewall status
+- service audit (telnet, rsh, cups, avahi, rpcbind)
+- firewall status (ufw, firewalld, iptables)
 - password policy (max age, min length, empty passwords)
 - uid 0 accounts
+- privilege escalation paths (sudoers nopasswd, writable PATH)
+- configuration drift detection against saved baseline
