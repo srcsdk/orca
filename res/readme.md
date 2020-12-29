@@ -7,22 +7,22 @@ incident response evidence collection toolkit. gathers system info, process tree
 ```
 ./res.sh -m all                          # full collection
 ./res.sh -m processes -p 1234            # targeted pid investigation
-./res.sh -m network -o /evidence         # network evidence to custom dir
-./res.sh -m users                        # user and login activity
+
+python3 res.py -m all                                  # full ir collection
+python3 res.py -m processes -p 1234                    # investigate pid
+python3 res.py -m contain --isolate --allow-ip 10.0.0.5  # network isolation
+python3 res.py -m contain --kill-pid 1234              # stop suspicious process
+python3 res.py -m timeline --json                      # generate timeline
 ```
-
-### options
-
-- `-m` : mode (collect, network, processes, users, integrity, all)
-- `-o` : output directory (default: ./ir_evidence)
-- `-p` : suspicious pid for detailed collection
 
 ### evidence collected
 
-- system info (hostname, kernel, uptime, disk, memory)
-- process tree with cpu/memory ranking
-- network connections and listening ports
-- user logins, cron jobs, ssh keys
-- recently modified system files
-- package integrity verification
-- rootkit indicators
+- system info (hostname, kernel, uptime, disk, memory, modules)
+- process tree with suspicious process detection
+- deleted executable detection
+- network state (connections, routes, arp, firewall)
+- user activity (logins, cron, ssh keys, auth logs)
+- file integrity (recent changes, package verification)
+- automated timeline generation from evidence
+- containment actions (network isolation, process stop)
+- evidence manifests and archiving
