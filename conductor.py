@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+import platform
 import subprocess
 import sys
 import time
@@ -331,6 +332,38 @@ BUILTIN_PLAYBOOKS = {
 }
 
 
+def _show_status():
+    """show available modules, playbooks, and platform info"""
+    os_name = platform.system()
+    print(f"[conductor] security orchestration engine")
+    print(f"[conductor] platform: {os_name} {platform.release()}")
+    print(f"[conductor] python: {platform.python_version()}")
+    print()
+
+    registry = ModuleRegistry()
+    modules = registry.list_modules()
+    print(f"available modules ({len(modules)}):")
+    for name in sorted(modules):
+        info = registry.get_module(name)
+        has_py = "py" if info["python"] else "  "
+        has_sh = "sh" if info["bash"] else "  "
+        print(f"  {name:15s} [{has_py}] [{has_sh}]")
+    if not modules:
+        print("  (no modules discovered)")
+    print()
+
+    print(f"builtin playbooks ({len(BUILTIN_PLAYBOOKS)}):")
+    for name, pb in BUILTIN_PLAYBOOKS.items():
+        n_steps = len(pb.get("steps", []))
+        print(f"  {name:20s} - {pb.get('description', '')} ({n_steps} steps)")
+    print()
+
+    print("usage:")
+    print("  conductor.py run <playbook> [--dry-run] [--var key=val]")
+    print("  conductor.py list modules")
+    print("  conductor.py list playbooks")
+
+
 def main():
     parser = argparse.ArgumentParser(description="security orchestration engine")
     sub = parser.add_subparsers(dest="command", help="command")
@@ -349,8 +382,8 @@ def main():
     args = parser.parse_args()
 
     if not args.command:
-        parser.print_help()
-        sys.exit(1)
+        _show_status()
+        return
 
     base_path = args.base if hasattr(args, "base") and args.base else None
 

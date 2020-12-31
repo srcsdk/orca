@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import platform
 import re
 import socket
 import ssl
@@ -230,7 +231,8 @@ def print_results(host, results):
 
 def main():
     parser = argparse.ArgumentParser(description="vulnerability scanner")
-    parser.add_argument("host", help="target host")
+    parser.add_argument("host", nargs="?", default=None,
+                        help="target host (default: localhost)")
     parser.add_argument("-p", "--ports", type=str,
                         default="21,22,25,80,443,8080,8443",
                         help="ports to scan")
@@ -240,6 +242,14 @@ def main():
                         help="save results to json")
 
     args = parser.parse_args()
+
+    if args.host is None:
+        args.host = "127.0.0.1"
+        print("no target specified, scanning localhost services")
+
+    # reduce threads on windows
+    if platform.system() == "Windows":
+        args.threads = min(args.threads, 15)
 
     ports = []
     for part in args.ports.split(","):

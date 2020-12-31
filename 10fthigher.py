@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+import platform
 import re
 import subprocess
 import sys
@@ -12,12 +13,33 @@ from collections import defaultdict, deque
 from datetime import datetime
 from pathlib import Path
 
+PLATFORM = platform.system().lower()
+
+
+def _detect_firewall_backend():
+    """auto-detect available firewall backend for this platform"""
+    if PLATFORM == "windows":
+        return "netsh"
+    elif PLATFORM == "darwin":
+        return "pfctl"
+    else:
+        for cmd in ["iptables", "nft"]:
+            try:
+                result = subprocess.run(
+                    [cmd, "--version"], capture_output=True, timeout=5
+                )
+                if result.returncode == 0:
+                    return cmd
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                continue
+        return "iptables"
+
 
 class FirewallBackend:
-    """abstraction for iptables/nftables"""
+    """cross-platform firewall abstraction"""
 
-    def __init__(self, backend="iptables"):
-        self.backend = backend
+    def __init__(self, backend=None):
+        self.backend = backend or _detect_firewall_backend()
         self.chain = "DYNAMIC_BLOCK"
 
     def setup_chain(self):
@@ -25,10 +47,6 @@ class FirewallBackend:
         if self.backend == "iptables":
             subprocess.run(
                 ["iptables", "-N", self.chain],
-                capture_output=True
-            )
-            subprocess.run(
-                ["iptables", "-C", "INPUT", "-j", self.chain],
                 capture_output=True
             )
             result = subprocess.run(
@@ -40,6 +58,10 @@ class FirewallBackend:
                     ["iptables", "-I", "INPUT", "1", "-j", self.chain],
                     capture_output=True
                 )
+        elif self.backend == "pfctl":
+            pass
+        elif self.backend == "netsh":
+            pass
 
     def block_ip(self, ip):
         """block an ip address"""
@@ -54,6 +76,19 @@ class FirewallBackend:
                     capture_output=True
                 )
                 return result.returncode == 0
+        elif self.backend == "pfctl":
+            result = subprocess.run(
+                ["pfctl", "-t", self.chain, "-T", "add", ip],
+                capture_output=True
+            )
+            return result.returncode == 0
+        elif self.backend == "netsh":
+            result = subprocess.run([
+                "netsh", "advfirewall", "firewall", "add", "rule",
+                f"name=block_{ip}", "dir=in", "action=block",
+                f"remoteip={ip}"
+            ], capture_output=True)
+            return result.returncode == 0
         return False
 
     def unblock_ip(self, ip):
@@ -63,6 +98,18 @@ class FirewallBackend:
                 ["iptables", "-D", self.chain, "-s", ip, "-j", "DROP"],
                 capture_output=True
             )
+            return result.returncode == 0
+        elif self.backend == "pfctl":
+            result = subprocess.run(
+                ["pfctl", "-t", self.chain, "-T", "delete", ip],
+                capture_output=True
+            )
+            return result.returncode == 0
+        elif self.backend == "netsh":
+            result = subprocess.run([
+                "netsh", "advfirewall", "firewall", "delete", "rule",
+                f"name=block_{ip}"
+            ], capture_output=True)
             return result.returncode == 0
         return False
 
@@ -78,10 +125,28 @@ class FirewallBackend:
             ], capture_output=True)
 
     def list_rules(self):
-        """list current rules"""
+        """list current firewall rules"""
         if self.backend == "iptables":
             result = subprocess.run(
                 ["iptables", "-L", self.chain, "-n", "-v", "--line-numbers"],
+                capture_output=True, text=True
+            )
+            if result.returncode == 0:
+                return result.stdout
+            result = subprocess.run(
+                ["iptables", "-L", "-n", "-v", "--line-numbers"],
+                capture_output=True, text=True
+            )
+            return result.stdout if result.returncode == 0 else ""
+        elif self.backend == "pfctl":
+            result = subprocess.run(
+                ["pfctl", "-sr"], capture_output=True, text=True
+            )
+            return result.stdout if result.returncode == 0 else ""
+        elif self.backend == "netsh":
+            result = subprocess.run(
+                ["netsh", "advfirewall", "firewall", "show", "rule",
+                 "name=all"],
                 capture_output=True, text=True
             )
             return result.stdout if result.returncode == 0 else ""
@@ -93,6 +158,15 @@ class FirewallBackend:
             subprocess.run(
                 ["iptables", "-F", self.chain], capture_output=True
             )
+        elif self.backend == "pfctl":
+            subprocess.run(
+                ["pfctl", "-t", self.chain, "-T", "flush"],
+                capture_output=True
+            )
+        elif self.backend == "netsh":
+            subprocess.run([
+                "netsh", "advfirewall", "reset"
+            ], capture_output=True)
 
 
 class RuleManager:
@@ -252,6 +326,61 @@ class LogMonitor:
                     time.sleep(0.5)
 
 
+def _check_root():
+    """check for root/admin privileges"""
+    if PLATFORM == "windows":
+        try:
+            import ctypes
+            return ctypes.windll.shell32.IsUserAnAdmin() != 0
+        except (ImportError, AttributeError):
+            return False
+    return os.geteuid() == 0
+
+
+def _default_state_path():
+    """return platform-appropriate state file path"""
+    if PLATFORM == "windows":
+        appdata = os.environ.get("APPDATA", "C:\\ProgramData")
+        return os.path.join(appdata, "dynfw", "state.json")
+    return "/var/lib/dynfw/state.json"
+
+
+def show_current_rules():
+    """show current firewall rules without requiring root (best effort)"""
+    print("dynamic firewall rule management")
+    print(f"platform: {PLATFORM}, backend: {_detect_firewall_backend()}\n")
+    print("current firewall rules:\n")
+    try:
+        if PLATFORM == "windows":
+            result = subprocess.run(
+                ["netsh", "advfirewall", "firewall", "show", "rule",
+                 "name=all", "dir=in"],
+                capture_output=True, text=True, timeout=10
+            )
+            # show first 40 lines to avoid flooding output
+            lines = result.stdout.strip().split("\n")
+            for line in lines[:40]:
+                print(f"  {line}")
+            if len(lines) > 40:
+                print(f"  ... ({len(lines) - 40} more lines)")
+        elif PLATFORM == "darwin":
+            result = subprocess.run(
+                ["pfctl", "-sr"], capture_output=True, text=True, timeout=5
+            )
+            output = result.stdout.strip() or result.stderr.strip()
+            print(output or "  (no rules or requires root)")
+        else:
+            result = subprocess.run(
+                ["iptables", "-L", "-n", "--line-numbers"],
+                capture_output=True, text=True, timeout=5
+            )
+            print(result.stdout.strip() or "  (no rules or requires root)")
+    except (subprocess.TimeoutExpired, OSError):
+        print("  could not read firewall rules (may need root/admin)")
+    print("\nuse --list with root/admin for full details")
+    print("use --help to see all options")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="dynamic firewall rule management"
@@ -261,10 +390,10 @@ def main():
     parser.add_argument("-m", "--monitor", help="monitor auth log file")
     parser.add_argument("--threshold", type=int, default=5,
                         help="failed auth threshold (default: 5)")
-    parser.add_argument("--backend", default="iptables",
-                        choices=["iptables", "nftables"],
-                        help="firewall backend")
-    parser.add_argument("--state", default="/var/lib/dynfw/state.json",
+    parser.add_argument("--backend", default=None,
+                        choices=["iptables", "nftables", "pfctl", "netsh"],
+                        help="firewall backend (auto-detected)")
+    parser.add_argument("--state", default=None,
                         help="state file for persistence")
     parser.add_argument("--block", help="block a single ip")
     parser.add_argument("--unblock", help="unblock a single ip")
@@ -273,11 +402,23 @@ def main():
                         help="remove all dynamic rules")
     args = parser.parse_args()
 
-    if os.geteuid() != 0:
-        print("requires root for firewall management", file=sys.stderr)
+    # default behavior: show rules without requiring root
+    no_action = not any([
+        args.blocklist, args.whitelist, args.monitor, args.block,
+        args.unblock, args.list, args.flush
+    ])
+    if no_action:
+        show_current_rules()
+        return
+
+    if not _check_root():
+        print("requires root/admin for firewall management", file=sys.stderr)
         sys.exit(1)
 
-    manager = RuleManager(backend=args.backend, state_file=args.state)
+    backend = args.backend or _detect_firewall_backend()
+    state_file = args.state or _default_state_path()
+
+    manager = RuleManager(backend=backend, state_file=state_file)
     manager.load_state()
     manager.firewall.setup_chain()
 

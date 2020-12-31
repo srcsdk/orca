@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+import platform
 import signal
 import struct
 import subprocess
@@ -193,10 +194,86 @@ def analyze_pcap(filename):
         return None
 
 
+def get_default_interface():
+    """detect default network interface for current platform"""
+    system = platform.system()
+    try:
+        if system == "Linux":
+            result = subprocess.run(
+                ["ip", "route", "show", "default"],
+                capture_output=True, text=True, timeout=5
+            )
+            parts = result.stdout.split()
+            if "dev" in parts:
+                return parts[parts.index("dev") + 1]
+        elif system == "Darwin":
+            result = subprocess.run(
+                ["route", "-n", "get", "default"],
+                capture_output=True, text=True, timeout=5
+            )
+            for line in result.stdout.split("\n"):
+                if "interface:" in line:
+                    return line.split()[-1]
+        elif system == "Windows":
+            result = subprocess.run(
+                ["netsh", "interface", "show", "interface"],
+                capture_output=True, text=True, timeout=5
+            )
+            for line in result.stdout.split("\n"):
+                if "Connected" in line:
+                    return line.split()[-1]
+    except (subprocess.TimeoutExpired, OSError, IndexError):
+        pass
+
+    defaults = {"Linux": "eth0", "Darwin": "en0", "Windows": "Ethernet"}
+    return defaults.get(system, "eth0")
+
+
+def is_admin():
+    """check if running with admin/root privileges"""
+    if platform.system() == "Windows":
+        try:
+            import ctypes
+            return ctypes.windll.shell32.IsUserAnAdmin() != 0
+        except (AttributeError, OSError):
+            return False
+    return os.geteuid() == 0
+
+
+def run_demo():
+    """generate demo capture data for testing without root"""
+    import random
+    print("running demo mode (no root privileges)")
+    print("generating synthetic packet data...\n")
+
+    analyzer = PacketAnalyzer()
+    hosts = ["192.168.1.10", "192.168.1.20", "10.0.0.1", "10.0.0.5"]
+    externals = ["8.8.8.8", "1.1.1.1", "93.184.216.34", "172.217.14.206"]
+    protos = ["TCP", "UDP", "TCP", "TCP", "ICMP", "ARP"]
+
+    for i in range(150):
+        src = random.choice(hosts)
+        dst = random.choice(externals)
+        proto = random.choice(protos)
+        entry = {
+            "raw": f"demo packet {i}",
+            "proto_family": "IP",
+            "src": f"{src}.{random.randint(1024, 65535)}",
+            "dst": f"{dst}.{random.choice([80, 443, 53, 22, 8080])}",
+            "proto": proto,
+        }
+        analyzer.process(entry)
+        print(f"  {proto:<6} {entry['src']} -> {entry['dst']}")
+
+    analyzer.print_stats()
+    return analyzer
+
+
 def main():
+    default_iface = get_default_interface()
     parser = argparse.ArgumentParser(description="packet capture and analysis")
-    parser.add_argument("-i", "--interface", default="eth0",
-                        help="capture interface")
+    parser.add_argument("-i", "--interface", default=default_iface,
+                        help=f"capture interface (default: {default_iface})")
     parser.add_argument("-c", "--count", type=int, default=0,
                         help="number of packets to capture (0=unlimited)")
     parser.add_argument("-f", "--filter", type=str,
@@ -209,6 +286,8 @@ def main():
                         help="export packets to text file")
     parser.add_argument("-o", "--output", type=str,
                         help="save stats to json")
+    parser.add_argument("--demo", action="store_true",
+                        help="run with synthetic demo data")
 
     args = parser.parse_args()
 
@@ -226,9 +305,19 @@ def main():
                 export_pcap(analyzer, args.export)
         return
 
+    # demo mode when no root or explicitly requested
+    if args.demo or not is_admin():
+        analyzer = run_demo()
+        if args.output:
+            with open(args.output, "w") as f:
+                json.dump(analyzer.stats(), f, indent=2)
+            print(f"\nsaved stats to {args.output}")
+        return
+
     # live capture
-    if os.geteuid() != 0:
-        print("live capture requires root", file=sys.stderr)
+    if platform.system() == "Windows":
+        print("tcpdump not available on windows", file=sys.stderr)
+        print("use windump or install npcap with tshark", file=sys.stderr)
         sys.exit(1)
 
     analyzer = PacketAnalyzer()

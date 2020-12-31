@@ -5,9 +5,11 @@ import argparse
 import json
 import math
 import os
+import platform
 import re
 import socket
 import struct
+import subprocess
 import sys
 import time
 from collections import defaultdict
@@ -197,40 +199,82 @@ class DlpEngine:
                     source_ip
                 )
 
-    def check_volume(self, interface="eth0"):
-        """check network interface for volumetric anomalies"""
-        stats_path = Path(f"/sys/class/net/{interface}/statistics")
-        if not stats_path.exists():
-            return
+    def check_volume(self, interface=None):
+        """check network interface for volumetric anomalies (cross-platform)"""
+        system = platform.system()
 
-        try:
-            tx_bytes = int((stats_path / "tx_bytes").read_text().strip())
-            rx_bytes = int((stats_path / "rx_bytes").read_text().strip())
-            tx_packets = int((stats_path / "tx_packets").read_text().strip())
-        except (ValueError, FileNotFoundError):
+        if system == "Linux":
+            iface = interface or "eth0"
+            stats_path = Path(f"/sys/class/net/{iface}/statistics")
+            if not stats_path.exists():
+                return
+            try:
+                tx_bytes = int((stats_path / "tx_bytes").read_text().strip())
+                rx_bytes = int((stats_path / "rx_bytes").read_text().strip())
+                tx_packets = int((stats_path / "tx_packets").read_text().strip())
+            except (ValueError, FileNotFoundError):
+                return
+        elif system == "Darwin":
+            iface = interface or "en0"
+            try:
+                result = subprocess.run(
+                    ["netstat", "-I", iface, "-b"],
+                    capture_output=True, text=True, timeout=5
+                )
+                lines = result.stdout.strip().split("\n")
+                if len(lines) < 2:
+                    return
+                parts = lines[1].split()
+                if len(parts) < 10:
+                    return
+                rx_bytes = int(parts[6])
+                tx_bytes = int(parts[9])
+                tx_packets = int(parts[7])
+            except (subprocess.TimeoutExpired, OSError, ValueError, IndexError):
+                return
+        elif system == "Windows":
+            iface = interface or "Ethernet"
+            try:
+                result = subprocess.run(
+                    ["netsh", "interface", "ip", "show", "stats"],
+                    capture_output=True, text=True, timeout=5
+                )
+                tx_bytes = 0
+                rx_bytes = 0
+                tx_packets = 0
+                for line in result.stdout.split("\n"):
+                    if "Bytes Sent" in line:
+                        tx_bytes = int(line.split("=")[-1].strip())
+                    elif "Bytes Received" in line:
+                        rx_bytes = int(line.split("=")[-1].strip())
+                    elif "Unicast Packets Sent" in line:
+                        tx_packets = int(line.split("=")[-1].strip())
+            except (subprocess.TimeoutExpired, OSError, ValueError):
+                return
+        else:
             return
 
         if tx_bytes > self.volume_threshold:
             tx_mb = tx_bytes / (1024 * 1024)
             self.add_alert(
                 "medium", "volume",
-                f"high outbound volume on {interface}: {tx_mb:.0f}MB",
-                interface
+                f"high outbound volume on {iface}: {tx_mb:.0f}MB",
+                iface
             )
 
         if tx_packets > 0 and tx_bytes / tx_packets > 1400:
             self.add_alert(
                 "low", "volume",
-                f"large average packet size on {interface}: {tx_bytes / tx_packets:.0f} bytes",
-                interface
+                f"large average packet size on {iface}: {tx_bytes / tx_packets:.0f} bytes",
+                iface
             )
 
         tx_rx_ratio = tx_bytes / max(rx_bytes, 1)
         if tx_rx_ratio > 5:
             self.add_alert(
                 "high", "volume",
-                f"unusual tx/rx ratio on {interface}: {tx_rx_ratio:.1f}",
-                interface
+                f"unusual tx/rx ratio on {iface}: {tx_rx_ratio:.1f}",
+                iface
             )
 
     def scan_file(self, filepath):
@@ -249,23 +293,52 @@ class DlpEngine:
         self.analyze_entropy(data, source)
 
     def scan_processes(self):
-        """check running processes for suspicious data handling"""
-        proc = Path("/proc")
-        if not proc.exists():
-            return
+        """check running processes for suspicious data handling (cross-platform)"""
+        system = platform.system()
 
-        for pid_dir in proc.iterdir():
-            if not pid_dir.name.isdigit():
-                continue
+        if system == "Linux":
+            proc = Path("/proc")
+            if not proc.exists():
+                return
+            for pid_dir in proc.iterdir():
+                if not pid_dir.name.isdigit():
+                    continue
+                try:
+                    cmdline = (pid_dir / "cmdline").read_bytes().replace(
+                        b"\x00", b" "
+                    ).decode(errors="replace")
+                    if len(cmdline) > 100:
+                        self.analyze_entropy(cmdline.encode(), f"pid:{pid_dir.name}")
+                        self.scan_content(cmdline, f"pid:{pid_dir.name}")
+                except (PermissionError, FileNotFoundError):
+                    continue
+        elif system == "Darwin":
             try:
-                cmdline = (pid_dir / "cmdline").read_bytes().replace(b"\x00", b" ").decode(
-                    errors="replace"
+                result = subprocess.run(
+                    ["ps", "aux"], capture_output=True, text=True, timeout=10
                 )
-                if len(cmdline) > 100:
-                    self.analyze_entropy(cmdline.encode(), f"pid:{pid_dir.name}")
-                    self.scan_content(cmdline, f"pid:{pid_dir.name}")
-            except (PermissionError, FileNotFoundError):
-                continue
+                for line in result.stdout.split("\n")[1:]:
+                    parts = line.split(None, 10)
+                    if len(parts) >= 11 and len(parts[10]) > 100:
+                        pid = parts[1]
+                        self.analyze_entropy(parts[10].encode(), f"pid:{pid}")
+                        self.scan_content(parts[10], f"pid:{pid}")
+            except (subprocess.TimeoutExpired, OSError):
+                pass
+        elif system == "Windows":
+            try:
+                result = subprocess.run(
+                    ["wmic", "process", "get", "processid,commandline",
+                     "/format:csv"],
+                    capture_output=True, text=True, timeout=10
+                )
+                for line in result.stdout.strip().split("\n")[1:]:
+                    parts = line.strip().split(",", 2)
+                    if len(parts) >= 3 and len(parts[1]) > 100:
+                        self.analyze_entropy(parts[1].encode(), f"pid:{parts[2]}")
+                        self.scan_content(parts[1], f"pid:{parts[2]}")
+            except (subprocess.TimeoutExpired, OSError):
+                pass
 
     def get_report(self):
         severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
@@ -301,13 +374,41 @@ def print_report(report, as_json=False):
             print(f"           {alert['evidence']}")
 
 
+def get_default_interface():
+    """detect default network interface"""
+    system = platform.system()
+    try:
+        if system == "Linux":
+            result = subprocess.run(
+                ["ip", "route", "show", "default"],
+                capture_output=True, text=True, timeout=5
+            )
+            parts = result.stdout.split()
+            if "dev" in parts:
+                return parts[parts.index("dev") + 1]
+        elif system == "Darwin":
+            result = subprocess.run(
+                ["route", "-n", "get", "default"],
+                capture_output=True, text=True, timeout=5
+            )
+            for line in result.stdout.split("\n"):
+                if "interface:" in line:
+                    return line.split()[-1]
+    except (subprocess.TimeoutExpired, OSError, IndexError):
+        pass
+    defaults = {"Linux": "eth0", "Darwin": "en0", "Windows": "Ethernet"}
+    return defaults.get(system, "eth0")
+
+
 def main():
+    default_iface = get_default_interface()
     parser = argparse.ArgumentParser(description="data loss prevention engine")
     parser.add_argument("-m", "--mode", default="all",
                         choices=["content", "dns", "volume", "processes", "all"],
                         help="scan mode")
     parser.add_argument("-f", "--file", action="append", help="file to scan")
-    parser.add_argument("-i", "--interface", default="eth0", help="network interface")
+    parser.add_argument("-i", "--interface", default=default_iface,
+                        help=f"network interface (default: {default_iface})")
     parser.add_argument("--entropy", type=float, default=6.5, help="entropy threshold")
     parser.add_argument("--volume", type=int, default=100, help="volume threshold (MB)")
     parser.add_argument("-o", "--output", help="output file")
@@ -318,6 +419,9 @@ def main():
         entropy_threshold=args.entropy,
         volume_threshold_mb=args.volume,
     )
+
+    print(f"[tropy] platform: {platform.system()}", file=sys.stderr)
+    print(f"[tropy] scan mode: {args.mode}", file=sys.stderr)
 
     if args.mode in ("content", "all") and args.file:
         for fp in args.file:

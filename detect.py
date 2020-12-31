@@ -5,12 +5,15 @@ import argparse
 import json
 import math
 import os
+import platform
 import signal
 import subprocess
 import sys
 import time
 from collections import defaultdict, Counter
 from datetime import datetime
+
+PLATFORM = platform.system().lower()
 
 
 class ScanDetector:
@@ -128,13 +131,28 @@ class ScanDetector:
                   f"{alert['syn_count']} syns in {self.time_window}s")
 
     def export_blocklist(self, filename):
-        """export blocklist as iptables rules"""
+        """export blocklist as firewall rules for current platform"""
         with open(filename, "w") as f:
-            f.write("#!/bin/bash\n")
-            f.write("# auto-generated blocklist\n")
-            for ip in sorted(self.blocklist):
-                f.write(f"iptables -A INPUT -s {ip} -j DROP\n")
-        os.chmod(filename, 0o755)
+            if PLATFORM == "windows":
+                f.write("@echo off\n")
+                f.write("rem auto-generated blocklist\n")
+                for ip in sorted(self.blocklist):
+                    f.write(f"netsh advfirewall firewall add rule "
+                            f"name=\"block_{ip}\" dir=in action=block "
+                            f"remoteip={ip}\n")
+            elif PLATFORM == "darwin":
+                f.write("#!/bin/bash\n")
+                f.write("# auto-generated blocklist (pf)\n")
+                for ip in sorted(self.blocklist):
+                    f.write(f"echo \"block drop from {ip} to any\" "
+                            f"| pfctl -f -\n")
+            else:
+                f.write("#!/bin/bash\n")
+                f.write("# auto-generated blocklist\n")
+                for ip in sorted(self.blocklist):
+                    f.write(f"iptables -A INPUT -s {ip} -j DROP\n")
+        if PLATFORM != "windows":
+            os.chmod(filename, 0o755)
         print(f"exported {len(self.blocklist)} rules to {filename}")
 
     def stats(self):
@@ -194,9 +212,78 @@ def monitor_tcpdump(interface, detector, bpf_filter=None):
     proc.wait()
 
 
+def _default_interface():
+    """detect default network interface"""
+    if PLATFORM == "linux":
+        try:
+            result = subprocess.run(
+                ["ip", "route", "show", "default"],
+                capture_output=True, text=True, timeout=5
+            )
+            parts = result.stdout.split()
+            if "dev" in parts:
+                return parts[parts.index("dev") + 1]
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+        return "eth0"
+    elif PLATFORM == "darwin":
+        try:
+            result = subprocess.run(
+                ["route", "-n", "get", "default"],
+                capture_output=True, text=True, timeout=5
+            )
+            for line in result.stdout.split("\n"):
+                if "interface:" in line:
+                    return line.split("interface:")[1].strip()
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+        return "en0"
+    elif PLATFORM == "windows":
+        return "Ethernet"
+    return "eth0"
+
+
+def _check_root():
+    """check for root/admin privileges"""
+    if PLATFORM == "windows":
+        try:
+            import ctypes
+            return ctypes.windll.shell32.IsUserAnAdmin() != 0
+        except (ImportError, AttributeError):
+            return False
+    return os.geteuid() == 0
+
+
+def run_self_test(detector):
+    """run a self-test with simulated scan data"""
+    print("running self-test with simulated scan data...\n")
+    base_time = time.time()
+    # simulate a port scan from a single source
+    test_ip = "10.0.0.99"
+    for port in range(1, 60):
+        detector.process_connection(test_ip, port, base_time + port * 0.1, "S")
+    # simulate a syn flood
+    flood_ip = "10.0.0.100"
+    for i in range(80):
+        detector.process_connection(flood_ip, 80, base_time + i * 0.05, "S")
+
+    print()
+    stats = detector.stats()
+    print("--- self-test results ---")
+    print(f"sources tracked: {stats['total_sources']}")
+    print(f"alerts raised:   {stats['total_alerts']}")
+    print(f"ips blocked:     {len(stats['blocked_ips'])}")
+    if stats["alert_types"]:
+        print(f"alert types:     {stats['alert_types']}")
+    if stats["severities"]:
+        print(f"severities:      {stats['severities']}")
+    print("\ndetector is working correctly" if stats["total_alerts"] > 0
+          else "\nwarning: no alerts generated")
+
+
 def main():
     parser = argparse.ArgumentParser(description="network scan detection")
-    parser.add_argument("-i", "--interface", default="eth0",
+    parser.add_argument("-i", "--interface", default=None,
                         help="network interface")
     parser.add_argument("--port-threshold", type=int, default=25,
                         help="ports before alerting (default: 25)")
@@ -208,24 +295,34 @@ def main():
                         help="export blocklist to file")
     parser.add_argument("-o", "--output", type=str,
                         help="save alerts to json")
+    parser.add_argument("--self-test", action="store_true",
+                        help="run self-test with simulated data")
 
     args = parser.parse_args()
-
-    if os.geteuid() != 0:
-        print("requires root for live capture", file=sys.stderr)
-        sys.exit(1)
 
     detector = ScanDetector(
         port_threshold=args.port_threshold,
         time_window=args.window,
     )
 
-    print(f"monitoring {args.interface} for scan activity...")
+    # default behavior: self-test if not root, monitor if root
+    if args.self_test:
+        run_self_test(detector)
+        return
+
+    if not _check_root():
+        print("not running as root/admin - running self-test instead\n")
+        run_self_test(detector)
+        return
+
+    iface = args.interface or _default_interface()
+
+    print(f"monitoring {iface} for scan activity...")
     print(f"thresholds: {args.port_threshold} ports in {args.window}s window")
     print("ctrl+c to stop\n")
 
     try:
-        monitor_tcpdump(args.interface, detector, args.filter)
+        monitor_tcpdump(iface, detector, args.filter)
     except KeyboardInterrupt:
         pass
 

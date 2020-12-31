@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import os
+import platform
 import re
 import signal
 import subprocess
@@ -15,10 +16,14 @@ from datetime import datetime
 from pathlib import Path
 
 
+def get_os():
+    return platform.system().lower()
+
+
 class ProcessInfo:
     """information about a running process"""
 
-    def __init__(self, pid):
+    def __init__(self, pid, os_type=None):
         self.pid = pid
         self.name = ""
         self.cmdline = ""
@@ -29,7 +34,16 @@ class ProcessInfo:
         self.threads = 0
         self.rss_kb = 0
         self.start_time = 0
-        self._read_proc()
+        self.os_type = os_type or get_os()
+        self._read_info()
+
+    def _read_info(self):
+        if self.os_type == "linux":
+            self._read_proc()
+        elif self.os_type == "darwin":
+            self._read_darwin()
+        elif self.os_type == "windows":
+            self._read_windows()
 
     def _read_proc(self):
         """read process info from /proc"""
@@ -68,6 +82,50 @@ class ProcessInfo:
         except (FileNotFoundError, PermissionError):
             pass
 
+    def _read_darwin(self):
+        """read process info via ps on macos"""
+        try:
+            result = subprocess.run(
+                ["ps", "-p", str(self.pid), "-o",
+                 "comm=,ppid=,uid=,rss="],
+                capture_output=True, text=True, timeout=5
+            )
+            line = result.stdout.strip()
+            if not line:
+                return
+            parts = line.split()
+            if len(parts) >= 1:
+                self.name = os.path.basename(parts[0])
+            if len(parts) >= 2:
+                self.ppid = int(parts[1])
+            if len(parts) >= 3:
+                self.uid = int(parts[2])
+            if len(parts) >= 4:
+                self.rss_kb = int(parts[3])
+        except (subprocess.TimeoutExpired, FileNotFoundError, ValueError):
+            pass
+
+    def _read_windows(self):
+        """read process info via wmic on windows"""
+        try:
+            result = subprocess.run(
+                ["wmic", "process", "where",
+                 f"ProcessId={self.pid}", "get",
+                 "Name,ParentProcessId,CommandLine,WorkingSetSize",
+                 "/format:csv"],
+                capture_output=True, text=True, timeout=10
+            )
+            for line in result.stdout.strip().split("\n"):
+                parts = line.strip().split(",")
+                if len(parts) >= 5 and parts[1]:
+                    self.cmdline = parts[1]
+                    self.name = parts[2]
+                    self.ppid = int(parts[3]) if parts[3].isdigit() else 0
+                    ws = parts[4].strip()
+                    self.rss_kb = int(ws) // 1024 if ws.isdigit() else 0
+        except (subprocess.TimeoutExpired, FileNotFoundError, ValueError):
+            pass
+
     def is_valid(self):
         return bool(self.name)
 
@@ -89,10 +147,25 @@ class FileIntegrityMonitor:
     """monitor files for changes"""
 
     def __init__(self, paths=None):
-        self.watched = paths or [
-            "/etc/passwd", "/etc/shadow", "/etc/sudoers",
-            "/etc/ssh/sshd_config", "/etc/crontab",
-        ]
+        os_type = get_os()
+        if paths:
+            self.watched = paths
+        elif os_type == "linux":
+            self.watched = [
+                "/etc/passwd", "/etc/shadow", "/etc/sudoers",
+                "/etc/ssh/sshd_config", "/etc/crontab",
+            ]
+        elif os_type == "darwin":
+            self.watched = [
+                "/etc/passwd", "/etc/sudoers",
+                "/etc/ssh/sshd_config",
+            ]
+        else:
+            sys_root = os.environ.get("SYSTEMROOT", "C:\\Windows")
+            self.watched = [
+                os.path.join(sys_root, "System32", "drivers", "etc", "hosts"),
+                os.path.join(sys_root, "System32", "config", "SAM"),
+            ]
         self.hashes = {}
         self._initial_scan()
 
@@ -138,7 +211,7 @@ class FileIntegrityMonitor:
 
 
 class StraceMonitor:
-    """monitor system calls via strace"""
+    """monitor system calls via strace (linux) or dtrace (macos)"""
 
     SUSPICIOUS_CALLS = {
         "ptrace": "process injection",
@@ -150,9 +223,23 @@ class StraceMonitor:
     def __init__(self, pid):
         self.pid = pid
         self.proc = None
+        self.os_type = get_os()
 
     def start(self):
-        """start strace on target process"""
+        """start tracing on target process"""
+        if self.os_type == "windows":
+            return False
+
+        if self.os_type == "darwin":
+            try:
+                self.proc = subprocess.Popen(
+                    ["dtruss", "-p", str(self.pid)],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                )
+                return True
+            except FileNotFoundError:
+                return False
+
         calls = ",".join(self.SUSPICIOUS_CALLS.keys())
         try:
             self.proc = subprocess.Popen(
@@ -165,7 +252,7 @@ class StraceMonitor:
         return True
 
     def check_output(self):
-        """read strace output for suspicious calls"""
+        """read trace output for suspicious calls"""
         alerts = []
         if not self.proc:
             return alerts
@@ -205,22 +292,68 @@ class ProcessMonitor:
         self.alerts = []
         self.fim = FileIntegrityMonitor()
         self.strace_monitors = {}
+        self.os_type = get_os()
         if extra_suspicious:
             self.SUSPICIOUS_NAMES.update(extra_suspicious)
 
     def scan_processes(self):
-        """scan /proc for current processes"""
+        """scan for current processes"""
+        if self.os_type == "linux":
+            return self._scan_proc()
+        return self._scan_ps()
+
+    def _scan_proc(self):
+        """scan /proc for processes (linux)"""
         current = {}
         try:
             for entry in os.listdir("/proc"):
                 if not entry.isdigit():
                     continue
                 pid = int(entry)
-                info = ProcessInfo(pid)
+                info = ProcessInfo(pid, "linux")
                 if info.is_valid():
                     current[pid] = info
         except PermissionError:
             pass
+        return current
+
+    def _scan_ps(self):
+        """scan processes via ps (macos) or tasklist (windows)"""
+        current = {}
+        if self.os_type == "windows":
+            try:
+                result = subprocess.run(
+                    ["tasklist", "/fo", "csv", "/nh"],
+                    capture_output=True, text=True, timeout=15
+                )
+                for line in result.stdout.strip().split("\n"):
+                    parts = line.strip().strip('"').split('","')
+                    if len(parts) >= 2:
+                        try:
+                            pid = int(parts[1].strip('"'))
+                            info = ProcessInfo(pid, "windows")
+                            if not info.is_valid():
+                                info.name = parts[0]
+                            current[pid] = info
+                        except ValueError:
+                            continue
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                pass
+        else:
+            try:
+                result = subprocess.run(
+                    ["ps", "-eo", "pid="],
+                    capture_output=True, text=True, timeout=10
+                )
+                for line in result.stdout.strip().split("\n"):
+                    line = line.strip()
+                    if line.isdigit():
+                        pid = int(line)
+                        info = ProcessInfo(pid, self.os_type)
+                        if info.is_valid():
+                            current[pid] = info
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                pass
         return current
 
     def detect_changes(self, current):
@@ -243,7 +376,6 @@ class ProcessMonitor:
         """check if a process is suspicious"""
         alerts = []
 
-        # name check
         if proc_info.name.lower() in self.SUSPICIOUS_NAMES:
             alerts.append({
                 "type": "suspicious_name",
@@ -252,7 +384,6 @@ class ProcessMonitor:
                 "message": f"suspicious process: {proc_info.name}",
             })
 
-        # deleted binary
         if "(deleted)" in proc_info.exe:
             alerts.append({
                 "type": "deleted_binary",
@@ -261,7 +392,6 @@ class ProcessMonitor:
                 "message": f"running deleted binary: {proc_info.exe}",
             })
 
-        # high fd count
         if proc_info.fd_count > 1000:
             alerts.append({
                 "type": "high_fd_count",
@@ -282,19 +412,19 @@ class ProcessMonitor:
 
     def run(self):
         """main monitoring loop"""
-        print(f"process monitor started (interval: {self.interval}s)")
+        print(f"process monitor started (interval: {self.interval}s, "
+              f"platform: {self.os_type})")
         print(f"watching for: {', '.join(sorted(self.SUSPICIOUS_NAMES))}")
         print()
 
-        # initial scan
         current = self.scan_processes()
         self.known_pids = {pid: info for pid, info in current.items()}
         print(f"tracking {len(self.known_pids)} processes")
 
-        def stop(sig, frame):
-            raise KeyboardInterrupt
-
-        signal.signal(signal.SIGTERM, stop)
+        if self.os_type != "windows":
+            def stop(sig, frame):
+                raise KeyboardInterrupt
+            signal.signal(signal.SIGTERM, stop)
 
         while True:
             time.sleep(self.interval)
@@ -312,7 +442,6 @@ class ProcessMonitor:
                 ts = datetime.now().strftime("%H:%M:%S")
                 print(f"[{ts}] exit: pid={proc.pid} {proc.name}")
 
-            # file integrity check
             changes = self.fim.check()
             for change in changes:
                 self.alert({
@@ -350,10 +479,15 @@ def main():
                     extra.add(name)
 
     if args.pid:
-        print(f"monitoring pid {args.pid} with strace")
+        os_type = get_os()
+        if os_type == "windows":
+            print("syscall tracing not supported on windows", file=sys.stderr)
+            sys.exit(1)
+        tracer = "dtruss" if os_type == "darwin" else "strace"
+        print(f"monitoring pid {args.pid} with {tracer}")
         strace = StraceMonitor(args.pid)
         if not strace.start():
-            print("strace not available", file=sys.stderr)
+            print(f"{tracer} not available", file=sys.stderr)
             sys.exit(1)
         try:
             while True:

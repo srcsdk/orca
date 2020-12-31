@@ -6,6 +6,7 @@ import csv
 import json
 import os
 import pickle
+import platform
 import sys
 import time
 from collections import defaultdict
@@ -13,15 +14,6 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-
-try:
-    from sklearn.ensemble import IsolationForest
-    from sklearn.svm import OneClassSVM
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.metrics import classification_report
-except ImportError:
-    print("[error] sklearn required: pip install scikit-learn", file=sys.stderr)
-    sys.exit(1)
 
 
 FLOW_FEATURES = [
@@ -100,7 +92,6 @@ def generate_synthetic_flows(n_normal=500, n_anomaly=20):
     rng = np.random.RandomState(42)
     flows = []
 
-    # normal traffic patterns
     for _ in range(n_normal):
         flows.append({
             "duration": rng.exponential(30),
@@ -113,7 +104,6 @@ def generate_synthetic_flows(n_normal=500, n_anomaly=20):
             "label": 1,
         })
 
-    # anomalous patterns (scans, exfil, c2)
     for _ in range(n_anomaly):
         anomaly_type = rng.choice(["scan", "exfil", "c2"])
         if anomaly_type == "scan":
@@ -138,7 +128,7 @@ def generate_synthetic_flows(n_normal=500, n_anomaly=20):
                 "unique_dst_ports": 1,
                 "label": -1,
             })
-        else:  # c2
+        else:
             flows.append({
                 "duration": rng.exponential(60),
                 "src_bytes": rng.lognormal(6, 0.3),
@@ -153,44 +143,146 @@ def generate_synthetic_flows(n_normal=500, n_anomaly=20):
     return flows
 
 
+class StandardScaler:
+    """z-score normalization (numpy only)"""
+
+    def __init__(self):
+        self.mean = None
+        self.std = None
+
+    def fit(self, x):
+        self.mean = np.mean(x, axis=0)
+        self.std = np.std(x, axis=0)
+        self.std[self.std == 0] = 1.0
+
+    def transform(self, x):
+        return (x - self.mean) / self.std
+
+    def fit_transform(self, x):
+        self.fit(x)
+        return self.transform(x)
+
+
+class IsolationTree:
+    """single isolation tree for anomaly detection"""
+
+    def __init__(self, max_depth=10):
+        self.max_depth = max_depth
+        self.split_feature = None
+        self.split_value = None
+        self.left = None
+        self.right = None
+        self.size = 0
+        self.is_leaf = False
+
+    def fit(self, x, depth=0, rng=None):
+        rng = rng or np.random.RandomState(42)
+        n_samples, n_features = x.shape
+        self.size = n_samples
+
+        if depth >= self.max_depth or n_samples <= 2:
+            self.is_leaf = True
+            return
+
+        self.split_feature = rng.randint(n_features)
+        col = x[:, self.split_feature]
+        col_min, col_max = col.min(), col.max()
+        if col_min == col_max:
+            self.is_leaf = True
+            return
+
+        self.split_value = rng.uniform(col_min, col_max)
+        left_mask = col < self.split_value
+        right_mask = ~left_mask
+
+        if left_mask.sum() == 0 or right_mask.sum() == 0:
+            self.is_leaf = True
+            return
+
+        self.left = IsolationTree(self.max_depth)
+        self.right = IsolationTree(self.max_depth)
+        self.left.fit(x[left_mask], depth + 1, rng)
+        self.right.fit(x[right_mask], depth + 1, rng)
+
+    def path_length(self, x, depth=0):
+        if self.is_leaf:
+            return depth + _avg_path_length(self.size)
+        if x[self.split_feature] < self.split_value:
+            return self.left.path_length(x, depth + 1)
+        return self.right.path_length(x, depth + 1)
+
+
+def _avg_path_length(n):
+    """average path length for unsuccessful search in bst"""
+    if n <= 1:
+        return 0.0
+    if n == 2:
+        return 1.0
+    return 2.0 * (np.log(n - 1) + 0.5772156649) - 2.0 * (n - 1) / n
+
+
+class IsolationForest:
+    """isolation forest anomaly detector (numpy only)"""
+
+    def __init__(self, n_estimators=100, contamination=0.05, max_samples=256):
+        self.n_estimators = n_estimators
+        self.contamination = contamination
+        self.max_samples = max_samples
+        self.trees = []
+        self.threshold = 0
+
+    def fit(self, x):
+        n_samples = x.shape[0]
+        subsample_size = min(self.max_samples, n_samples)
+        rng = np.random.RandomState(42)
+        max_depth = int(np.ceil(np.log2(subsample_size)))
+
+        self.trees = []
+        for i in range(self.n_estimators):
+            tree_rng = np.random.RandomState(rng.randint(2**31))
+            indices = tree_rng.choice(n_samples, size=subsample_size, replace=False)
+            tree = IsolationTree(max_depth=max_depth)
+            tree.fit(x[indices], rng=tree_rng)
+            self.trees.append(tree)
+
+        scores = self.decision_function(x)
+        self.threshold = np.percentile(scores, self.contamination * 100)
+
+    def decision_function(self, x):
+        """compute anomaly scores (lower = more anomalous)"""
+        n = x.shape[0]
+        depths = np.zeros(n)
+        for tree in self.trees:
+            for i in range(n):
+                depths[i] += tree.path_length(x[i])
+        avg_depths = depths / len(self.trees)
+        c = _avg_path_length(self.max_samples)
+        scores = -(2 ** (-avg_depths / max(c, 1e-10)))
+        return scores
+
+    def predict(self, x):
+        """return 1 for normal, -1 for anomaly"""
+        scores = self.decision_function(x)
+        return np.where(scores <= self.threshold, -1, 1)
+
+
 class AnomalyDetector:
-    def __init__(self, model_type="isolation_forest", contamination=0.05):
-        self.model_type = model_type
+    def __init__(self, contamination=0.05):
         self.contamination = contamination
         self.scaler = StandardScaler()
-        self.model = None
-        self._init_model()
-
-    def _init_model(self):
-        if self.model_type == "isolation_forest":
-            self.model = IsolationForest(
-                contamination=self.contamination,
-                n_estimators=100,
-                random_state=42,
-            )
-        elif self.model_type == "one_class_svm":
-            self.model = OneClassSVM(
-                kernel="rbf",
-                gamma="scale",
-                nu=self.contamination,
-            )
-        else:
-            raise ValueError(f"unknown model type: {self.model_type}")
+        self.model = IsolationForest(contamination=contamination)
 
     def train(self, flows):
         """train the anomaly detection model"""
         feature_matrix = np.array([extract_features(f) for f in flows])
         feature_matrix = np.nan_to_num(feature_matrix, nan=0.0, posinf=1e6, neginf=-1e6)
 
-        self.scaler.fit(feature_matrix)
-        scaled = self.scaler.transform(feature_matrix)
-
+        scaled = self.scaler.fit_transform(feature_matrix)
         self.model.fit(scaled)
 
-        scores = self.model.decision_function(scaled)
         predictions = self.model.predict(scaled)
-
-        n_anomalies = sum(1 for p in predictions if p == -1)
+        scores = self.model.decision_function(scaled)
+        n_anomalies = int(np.sum(predictions == -1))
         print(f"[probaduce] trained on {len(flows)} flows, {n_anomalies} flagged as anomalous")
 
         return {
@@ -202,9 +294,6 @@ class AnomalyDetector:
 
     def predict(self, flows):
         """predict anomalies in new flow data"""
-        if self.model is None:
-            raise RuntimeError("model not trained")
-
         feature_matrix = np.array([extract_features(f) for f in flows])
         feature_matrix = np.nan_to_num(feature_matrix, nan=0.0, posinf=1e6, neginf=-1e6)
         scaled = self.scaler.transform(feature_matrix)
@@ -235,18 +324,29 @@ class AnomalyDetector:
         scaled = self.scaler.transform(feature_matrix)
 
         predictions = self.model.predict(scaled)
-        true_labels = [f["label"] for f in labeled]
+        true_labels = np.array([f["label"] for f in labeled])
 
-        report = classification_report(
-            true_labels, predictions,
-            target_names=["anomaly", "normal"],
-            output_dict=True,
-        )
-        return report
+        tp = int(np.sum((predictions == -1) & (true_labels == -1)))
+        tn = int(np.sum((predictions == 1) & (true_labels == 1)))
+        fp = int(np.sum((predictions == -1) & (true_labels == 1)))
+        fn = int(np.sum((predictions == 1) & (true_labels == -1)))
+
+        precision = tp / max(tp + fp, 1)
+        recall = tp / max(tp + fn, 1)
+        f1 = 2 * precision * recall / max(precision + recall, 1e-10)
+        accuracy = (tp + tn) / max(len(labeled), 1)
+
+        return {
+            "accuracy": round(accuracy, 4),
+            "precision": round(precision, 4),
+            "recall": round(recall, 4),
+            "f1_score": round(f1, 4),
+            "confusion": {"tp": tp, "tn": tn, "fp": fp, "fn": fn},
+        }
 
     def save(self, filepath):
         """save model and scaler to disk"""
-        data = {"model": self.model, "scaler": self.scaler, "type": self.model_type}
+        data = {"model": self.model, "scaler": self.scaler}
         with open(filepath, "wb") as f:
             pickle.dump(data, f)
         print(f"[probaduce] model saved to {filepath}")
@@ -257,7 +357,6 @@ class AnomalyDetector:
             data = pickle.load(f)
         self.model = data["model"]
         self.scaler = data["scaler"]
-        self.model_type = data["type"]
         print(f"[probaduce] model loaded from {filepath}")
 
 
@@ -286,26 +385,22 @@ def print_results(results, as_json=False, show_normal=False):
 
 def main():
     parser = argparse.ArgumentParser(description="ml anomaly detection engine")
-    parser.add_argument("command", choices=["train", "predict", "evaluate", "demo"],
-                        help="operation mode")
+    parser.add_argument("command", nargs="?", default="demo",
+                        choices=["train", "predict", "evaluate", "demo"],
+                        help="operation mode (default: demo)")
     parser.add_argument("-f", "--file", help="flow data file (csv or json)")
     parser.add_argument("-m", "--model-file", default="probaduce_model.pkl",
                         help="model file path")
-    parser.add_argument("--model-type", default="isolation_forest",
-                        choices=["isolation_forest", "one_class_svm"],
-                        help="ml model type")
     parser.add_argument("--contamination", type=float, default=0.05,
                         help="expected anomaly ratio")
     parser.add_argument("--json", action="store_true", help="json output")
     parser.add_argument("--show-normal", action="store_true", help="show normal flows too")
     args = parser.parse_args()
 
-    detector = AnomalyDetector(
-        model_type=args.model_type,
-        contamination=args.contamination,
-    )
+    detector = AnomalyDetector(contamination=args.contamination)
 
     if args.command == "demo":
+        print(f"[probaduce] platform: {platform.system()} {platform.release()}")
         print("[probaduce] generating synthetic flow data")
         flows = generate_synthetic_flows()
 

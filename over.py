@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 import os
+import platform
 import socket
 import struct
 import sys
@@ -274,12 +275,69 @@ class IcmpExfiltrator:
         return self.stats
 
 
+def run_self_test():
+    """run a self-test demonstrating exfiltration techniques locally"""
+    system = platform.system()
+    print("[over] running self-test (no network activity)")
+    print(f"[over] platform: {system}\n")
+
+    test_data = b"this is test data for dlp validation"
+
+    # test dns encoding
+    print("[test] dns subdomain encoding:")
+    encoded = base64.b32encode(test_data).decode().rstrip("=").lower()
+    chunks = list(chunk_data(encoded, 30))
+    print(f"  input:  {len(test_data)} bytes")
+    print(f"  encoded: {len(encoded)} chars")
+    print(f"  chunks: {len(chunks)} dns queries needed")
+    for i, c in enumerate(chunks[:3]):
+        print(f"  query {i}: {c}.exfil.example.com")
+    if len(chunks) > 3:
+        print(f"  ... ({len(chunks) - 3} more)")
+
+    # test http encoding
+    print("\n[test] http post encoding:")
+    http_encoded = base64.b64encode(test_data).decode()
+    http_chunks = list(chunk_data(http_encoded, 256))
+    print(f"  input:  {len(test_data)} bytes")
+    print(f"  encoded: {len(http_encoded)} chars")
+    print(f"  requests: {len(http_chunks)} http posts needed")
+
+    # test icmp encoding
+    print("\n[test] icmp payload encoding:")
+    icmp_chunks = list(chunk_data(test_data, 48))
+    print(f"  input:  {len(test_data)} bytes")
+    print(f"  packets: {len(icmp_chunks)} icmp echo requests needed")
+
+    # verify round-trip
+    print("\n[test] round-trip verification:")
+    padding = (8 - len(encoded) % 8) % 8
+    decoded = base64.b32decode((encoded + "=" * padding).upper())
+    if decoded == test_data:
+        print("  dns encoding: pass")
+    else:
+        print("  dns encoding: fail")
+    http_decoded = base64.b64decode(http_encoded)
+    if http_decoded == test_data:
+        print("  http encoding: pass")
+    else:
+        print("  http encoding: fail")
+
+    print("\n[over] self-test complete")
+    print("[over] available modes: dns, dns-recv, http, icmp")
+
+    if system == "Windows":
+        print("[over] note: icmp raw sockets require admin on windows")
+    elif system == "Darwin":
+        print("[over] note: icmp raw sockets require root on macos")
+
+
 def main():
     parser = argparse.ArgumentParser(description="data exfiltration testing framework")
-    parser.add_argument("-m", "--mode", required=True,
+    parser.add_argument("-m", "--mode",
                         choices=["dns", "dns-recv", "icmp", "http"],
                         help="exfil mode")
-    parser.add_argument("-t", "--target", required=True,
+    parser.add_argument("-t", "--target",
                         help="target (must be own infrastructure)")
     parser.add_argument("-d", "--data", help="data file to exfiltrate")
     parser.add_argument("-a", "--auth", help="authorization token")
@@ -287,6 +345,15 @@ def main():
     parser.add_argument("--timeout", type=int, default=60, help="receiver timeout")
     parser.add_argument("--json", action="store_true", help="json output")
     args = parser.parse_args()
+
+    # default: run self-test when no mode specified
+    if not args.mode:
+        run_self_test()
+        return
+
+    if not args.target:
+        print("[error] target required (-t) for exfiltration mode")
+        sys.exit(1)
 
     verify_authorization(args.auth, args.target)
 

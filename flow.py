@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+import platform
 import signal
 import subprocess
 import sys
@@ -178,8 +179,96 @@ class FlowTracker:
                   f"({conv['proto']}) {total} pkts (ratio: {ratio:.1f})")
 
 
+def get_default_interface():
+    """detect default network interface for current platform"""
+    system = platform.system()
+    try:
+        if system == "Linux":
+            result = subprocess.run(
+                ["ip", "route", "show", "default"],
+                capture_output=True, text=True, timeout=5
+            )
+            for part in result.stdout.split():
+                if part == "dev":
+                    idx = result.stdout.split().index("dev")
+                    return result.stdout.split()[idx + 1]
+        elif system == "Darwin":
+            result = subprocess.run(
+                ["route", "-n", "get", "default"],
+                capture_output=True, text=True, timeout=5
+            )
+            for line in result.stdout.split("\n"):
+                if "interface:" in line:
+                    return line.split()[-1]
+        elif system == "Windows":
+            result = subprocess.run(
+                ["netsh", "interface", "show", "interface"],
+                capture_output=True, text=True, timeout=5
+            )
+            for line in result.stdout.split("\n"):
+                if "Connected" in line:
+                    return line.split()[-1]
+    except (subprocess.TimeoutExpired, OSError, IndexError):
+        pass
+
+    defaults = {"Linux": "eth0", "Darwin": "en0", "Windows": "Ethernet"}
+    return defaults.get(system, "eth0")
+
+
+def is_admin():
+    """check if running with admin/root privileges"""
+    system = platform.system()
+    if system == "Windows":
+        try:
+            import ctypes
+            return ctypes.windll.shell32.IsUserAnAdmin() != 0
+        except (AttributeError, OSError):
+            return False
+    return os.geteuid() == 0
+
+
+def run_demo(tracker):
+    """generate demo flow data for testing without root"""
+    import random
+    print("running demo mode (no root privileges)")
+    print("generating synthetic flow data...\n")
+
+    hosts = [
+        "192.168.1.10", "192.168.1.20", "192.168.1.30",
+        "10.0.0.1", "10.0.0.5",
+    ]
+    externals = [
+        "8.8.8.8", "1.1.1.1", "93.184.216.34",
+        "151.101.1.140", "172.217.14.206",
+    ]
+    protos = ["TCP", "UDP", "TCP", "TCP", "ICMP"]
+    ports = [80, 443, 53, 22, 8080, 3306, 25, 110, 993, 8443]
+
+    base_time = time.time() - 120
+    for i in range(200):
+        src = random.choice(hosts)
+        dst = random.choice(externals)
+        proto = random.choice(protos)
+        src_port = random.randint(1024, 65535)
+        dst_port = random.choice(ports)
+        ts = base_time + i * 0.6
+
+        tracker.process(src, dst, src_port, dst_port, proto, ts)
+
+        if random.random() < 0.3:
+            tracker.process(dst, src, dst_port, src_port, proto, ts + 0.01)
+
+    tracker.print_stats()
+
+
 def monitor_tcpdump(interface, tracker, bpf_filter=None):
     """monitor traffic with tcpdump"""
+    system = platform.system()
+    if system == "Windows":
+        print("tcpdump not available on windows", file=sys.stderr)
+        print("use windump or install npcap with tshark", file=sys.stderr)
+        sys.exit(1)
+
     cmd = ["tcpdump", "-i", interface, "-nn", "-l", "-tttt"]
     if bpf_filter:
         cmd.extend(bpf_filter.split())
@@ -223,23 +312,30 @@ def monitor_tcpdump(interface, tracker, bpf_filter=None):
 
 
 def main():
+    default_iface = get_default_interface()
     parser = argparse.ArgumentParser(description="network flow analysis")
-    parser.add_argument("-i", "--interface", default="eth0",
-                        help="capture interface")
+    parser.add_argument("-i", "--interface", default=default_iface,
+                        help=f"capture interface (default: {default_iface})")
     parser.add_argument("-f", "--filter", type=str,
                         help="bpf filter")
     parser.add_argument("--timeout", type=int, default=30,
                         help="flow timeout in seconds (default: 30)")
     parser.add_argument("-o", "--output", type=str,
                         help="save flow data to json")
+    parser.add_argument("--demo", action="store_true",
+                        help="run with synthetic demo data")
 
     args = parser.parse_args()
 
-    if os.geteuid() != 0:
-        print("requires root for live capture", file=sys.stderr)
-        sys.exit(1)
-
     tracker = FlowTracker(timeout=args.timeout)
+
+    if args.demo or not is_admin():
+        run_demo(tracker)
+        if args.output:
+            with open(args.output, "w") as f:
+                json.dump(tracker.stats(), f, indent=2)
+            print(f"\nsaved to {args.output}")
+        return
 
     print(f"tracking flows on {args.interface} (timeout: {args.timeout}s)")
     print("ctrl+c to stop\n")

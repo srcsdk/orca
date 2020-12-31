@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+import platform
 import re
 import socket
 import ssl
@@ -129,7 +130,8 @@ class TlsAuditor:
             if key_match:
                 key_path = key_match.group(1).strip(';')
                 if os.path.exists(key_path):
-                    perms = oct(os.stat(key_path).st_mode)[-3:]
+                    mode = os.stat(key_path).st_mode
+                    perms = oct(mode)[-3:]
                     if perms not in ("600", "400"):
                         self.add_finding("high", "keys",
                                          f"key file permissions too open: {key_path} ({perms})")
@@ -161,15 +163,20 @@ class TlsAuditor:
         days_left = (not_after - datetime.utcnow()).days
 
         if days_left < 0:
-            self.add_finding("critical", "certificate", f"certificate expired {abs(days_left)} days ago")
+            self.add_finding("critical", "certificate",
+                             f"certificate expired {abs(days_left)} days ago")
         elif days_left < 14:
-            self.add_finding("critical", "certificate", f"certificate expires in {days_left} days")
+            self.add_finding("critical", "certificate",
+                             f"certificate expires in {days_left} days")
         elif days_left < 30:
-            self.add_finding("high", "certificate", f"certificate expires in {days_left} days")
+            self.add_finding("high", "certificate",
+                             f"certificate expires in {days_left} days")
         elif days_left < 90:
-            self.add_finding("medium", "certificate", f"certificate expires in {days_left} days")
+            self.add_finding("medium", "certificate",
+                             f"certificate expires in {days_left} days")
         else:
-            self.add_finding("info", "certificate", f"certificate valid for {days_left} days")
+            self.add_finding("info", "certificate",
+                             f"certificate valid for {days_left} days")
 
         subject = dict(x[0] for x in cert.get("subject", ()))
         cn = subject.get("commonName", "")
@@ -197,12 +204,18 @@ class TlsAuditor:
         return hostname == pattern
 
     def _test_protocols(self, host, port):
+        import warnings
         protocol_map = {
-            "TLSv1": ssl.TLSVersion.TLSv1,
-            "TLSv1.1": ssl.TLSVersion.TLSv1_1,
             "TLSv1.2": ssl.TLSVersion.TLSv1_2,
             "TLSv1.3": ssl.TLSVersion.TLSv1_3,
         }
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            if hasattr(ssl.TLSVersion, "TLSv1"):
+                protocol_map["TLSv1"] = ssl.TLSVersion.TLSv1
+            if hasattr(ssl.TLSVersion, "TLSv1_1"):
+                protocol_map["TLSv1.1"] = ssl.TLSVersion.TLSv1_1
+
         for name, version in protocol_map.items():
             supported = self._test_protocol_version(host, port, version)
             if name in WEAK_PROTOCOLS and supported:
@@ -213,12 +226,15 @@ class TlsAuditor:
                 self.add_finding("medium", "protocol", f"{name} is not supported")
 
     def _test_protocol_version(self, host, port, version):
+        import warnings
         try:
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
-            ctx.minimum_version = version
-            ctx.maximum_version = version
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                ctx.minimum_version = version
+                ctx.maximum_version = version
             with socket.create_connection((host, port), timeout=5) as sock:
                 with ctx.wrap_socket(sock, server_hostname=host) as ssock:
                     return True
@@ -252,7 +268,8 @@ class TlsAuditor:
                 ctx.set_ciphers(cipher)
                 with socket.create_connection((host, port), timeout=5) as sock:
                     with ctx.wrap_socket(sock, server_hostname=host):
-                        self.add_finding("info", "mozilla", f"supports recommended cipher: {cipher}")
+                        self.add_finding("info", "mozilla",
+                                         f"supports recommended cipher: {cipher}")
             except (ssl.SSLError, OSError, ValueError):
                 pass
 
@@ -290,6 +307,54 @@ def print_report(report, as_json=False):
         print(f"  [{severity}] [{f['category']}] {f['message']}")
 
 
+def _detect_tls_configs():
+    """find tls config files based on platform"""
+    os_name = platform.system()
+    candidates = []
+    if os_name == "Linux":
+        candidates = [
+            "/etc/nginx/nginx.conf",
+            "/etc/nginx/conf.d/default.conf",
+            "/etc/nginx/sites-enabled/default",
+            "/etc/apache2/sites-enabled/default-ssl.conf",
+            "/etc/httpd/conf.d/ssl.conf",
+        ]
+    elif os_name == "Darwin":
+        candidates = [
+            "/usr/local/etc/nginx/nginx.conf",
+            "/opt/homebrew/etc/nginx/nginx.conf",
+            "/etc/apache2/extra/httpd-ssl.conf",
+        ]
+    elif os_name == "Windows":
+        candidates = [
+            os.path.join(os.environ.get("ProgramFiles", "C:\\Program Files"),
+                         "nginx", "conf", "nginx.conf"),
+        ]
+    return [c for c in candidates if os.path.isfile(c)]
+
+
+def _default_scan():
+    """scan localhost tls and any detected config files"""
+    os_name = platform.system()
+    print(f"[downseek] tls auditor")
+    print(f"[downseek] platform: {os_name} {platform.release()}")
+    print()
+
+    auditor = TlsAuditor()
+
+    configs = _detect_tls_configs()
+    if configs:
+        for config in configs:
+            print(f"[downseek] auditing config: {config}")
+            auditor.audit_config_file(config)
+
+    print("[downseek] scanning localhost:443...")
+    auditor.scan_host("localhost", 443)
+
+    report = auditor.get_report()
+    print_report(report)
+
+
 def main():
     parser = argparse.ArgumentParser(description="tls configuration auditor")
     parser.add_argument("-t", "--target", help="target host to scan")
@@ -300,8 +365,8 @@ def main():
     args = parser.parse_args()
 
     if not args.target and not args.config:
-        parser.print_help()
-        sys.exit(1)
+        _default_scan()
+        return
 
     auditor = TlsAuditor()
 

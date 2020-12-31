@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import platform
 import re
 import socket
 import ssl
@@ -201,8 +202,9 @@ def main():
     parser = argparse.ArgumentParser(
         description="service fingerprinting and banner grabbing"
     )
-    parser.add_argument("host", help="target host")
-    parser.add_argument("-p", "--ports", type=str, default="21,22,25,80,443",
+    parser.add_argument("host", nargs="?", default=None,
+                        help="target host (default: localhost)")
+    parser.add_argument("-p", "--ports", type=str, default=None,
                         help="ports to scan (comma-separated or range)")
     parser.add_argument("-t", "--threads", type=int, default=20,
                         help="threads (default: 20)")
@@ -214,6 +216,17 @@ def main():
                         help="analyze http security headers")
 
     args = parser.parse_args()
+
+    # default to localhost common ports when no args given
+    if args.host is None:
+        args.host = "127.0.0.1"
+        print("no target specified, scanning localhost common ports")
+    if args.ports is None:
+        args.ports = "21,22,25,80,443"
+
+    # reduce threads on windows
+    if platform.system() == "Windows":
+        args.threads = min(args.threads, 15)
 
     # parse port specification
     ports = []

@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+import platform
 import re
 import signal
 import subprocess
@@ -11,6 +12,10 @@ import sys
 import time
 from collections import defaultdict, deque
 from datetime import datetime
+
+
+def get_os():
+    return platform.system().lower()
 
 
 class Rule:
@@ -78,19 +83,16 @@ class AnomalyDetector:
         alerts = []
         key = src_ip
 
-        # track packet rate
         self.packet_rates[key].append(timestamp)
         cutoff = timestamp - self.window
         while self.packet_rates[key] and self.packet_rates[key][0] < cutoff:
             self.packet_rates[key].popleft()
         current_rate = len(self.packet_rates[key])
 
-        # update baseline
         bl = self.baselines[key]
         bl["count"] += 1
         bl["mean"] += (current_rate - bl["mean"]) / bl["count"]
 
-        # detect rate anomaly (3x baseline after warmup)
         if bl["count"] > 10 and current_rate > bl["mean"] * 3:
             alerts.append({
                 "type": "rate_anomaly",
@@ -100,7 +102,6 @@ class AnomalyDetector:
                 "severity": "high",
             })
 
-        # track unique destinations per source (scan detection)
         self.connection_tracker[src_ip].add((dst_ip, dst_port))
         unique = len(self.connection_tracker[src_ip])
         if unique > 50:
@@ -128,7 +129,6 @@ class AlertManager:
         key = f"{alert.get('source', '')}:{alert.get('type', '')}"
         now = time.time()
 
-        # deduplicate within window
         while (self.recent[key] and
                self.recent[key][0] < now - self.threshold_window):
             self.recent[key].popleft()
@@ -137,7 +137,6 @@ class AlertManager:
 
         self.recent[key].append(now)
 
-        # calculate score
         severity_scores = {
             "critical": 10, "high": 7, "medium": 4, "low": 1
         }
@@ -207,7 +206,6 @@ class IDS:
         timestamp = timestamp or time.time()
         self.total_packets += 1
 
-        # signature-based checks
         for rule in self.rules:
             matched = False
             if rule.content and payload:
@@ -230,7 +228,6 @@ class IDS:
                 if result:
                     self.print_alert(result)
 
-        # anomaly-based checks
         anomalies = self.anomaly.record_packet(
             src_ip, dst_ip, dst_port, timestamp
         )
@@ -309,16 +306,183 @@ def monitor_interface(interface, ids_engine, bpf_filter=None):
     proc.wait()
 
 
+def show_security_events():
+    """show recent security-related events from system logs"""
+    os_type = get_os()
+    print(f"[weewoo] recent security events ({platform.system()})")
+    print()
+
+    if os_type == "linux":
+        _show_linux_events()
+    elif os_type == "darwin":
+        _show_macos_events()
+    elif os_type == "windows":
+        _show_windows_events()
+
+
+def _show_linux_events():
+    """show security events from journalctl or log files"""
+    events = []
+
+    try:
+        result = subprocess.run(
+            ["journalctl", "--no-pager", "-n", "50", "-p", "warning",
+             "--since", "24 hours ago"],
+            capture_output=True, text=True, timeout=15
+        )
+        if result.returncode == 0:
+            for line in result.stdout.strip().split("\n"):
+                if line.strip():
+                    events.append(line)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    if not events:
+        for log_path in ["/var/log/auth.log", "/var/log/secure",
+                         "/var/log/syslog"]:
+            try:
+                with open(log_path) as f:
+                    lines = f.readlines()
+                for line in lines[-50:]:
+                    lower = line.lower()
+                    if any(kw in lower for kw in [
+                        "failed", "error", "denied", "invalid",
+                        "unauthorized", "attack"
+                    ]):
+                        events.append(line.strip())
+            except (FileNotFoundError, PermissionError):
+                continue
+
+    if not events:
+        print("  no recent security events found")
+        return
+
+    for event in events[-30:]:
+        print(f"  {event}")
+    print(f"\n  total events shown: {min(len(events), 30)}")
+
+
+def _show_macos_events():
+    """show security events from macos log system"""
+    try:
+        result = subprocess.run(
+            ["log", "show", "--predicate",
+             'eventMessage CONTAINS "error" OR eventMessage CONTAINS "denied" '
+             'OR eventMessage CONTAINS "failed"',
+             "--last", "1h", "--style", "compact"],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.stdout.strip():
+            lines = result.stdout.strip().split("\n")
+            for line in lines[-30:]:
+                print(f"  {line}")
+            print(f"\n  total events: {len(lines)}")
+        else:
+            print("  no recent security events found")
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        print("  could not query macos log system")
+
+
+def _show_windows_events():
+    """show security events from windows event log"""
+    try:
+        result = subprocess.run(
+            ["wevtutil", "qe", "Security", "/c:30", "/rd:true",
+             "/f:text"],
+            capture_output=True, text=True, timeout=15
+        )
+        if result.stdout.strip():
+            print(result.stdout)
+        else:
+            result = subprocess.run(
+                ["wevtutil", "qe", "System", "/c:30", "/rd:true",
+                 "/f:text"],
+                capture_output=True, text=True, timeout=15
+            )
+            if result.stdout.strip():
+                print(result.stdout)
+            else:
+                print("  no recent events found")
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        print("  could not query windows event log")
+
+
+def check_listening_ports():
+    """show listening ports as a quick security check"""
+    os_type = get_os()
+    print("\n[weewoo] listening ports")
+    print()
+
+    if os_type == "linux":
+        try:
+            result = subprocess.run(
+                ["ss", "-tulnp"],
+                capture_output=True, text=True, timeout=10
+            )
+            print(result.stdout)
+            return
+        except FileNotFoundError:
+            pass
+
+    if os_type == "darwin":
+        try:
+            result = subprocess.run(
+                ["lsof", "-iTCP", "-sTCP:LISTEN", "-P", "-n"],
+                capture_output=True, text=True, timeout=10
+            )
+            print(result.stdout)
+            return
+        except FileNotFoundError:
+            pass
+
+    if os_type == "windows":
+        try:
+            result = subprocess.run(
+                ["netstat", "-ano", "-p", "tcp"],
+                capture_output=True, text=True, timeout=10
+            )
+            for line in result.stdout.split("\n"):
+                if "LISTENING" in line:
+                    print(f"  {line.strip()}")
+            return
+        except FileNotFoundError:
+            pass
+
+    try:
+        result = subprocess.run(
+            ["netstat", "-tulnp"],
+            capture_output=True, text=True, timeout=10
+        )
+        print(result.stdout)
+    except FileNotFoundError:
+        print("  no network tools available")
+
+
 def main():
     parser = argparse.ArgumentParser(description="intrusion detection system")
-    parser.add_argument("-i", "--interface", default="eth0",
-                        help="network interface")
+    parser.add_argument("-i", "--interface",
+                        help="network interface for live capture")
     parser.add_argument("-r", "--rules", help="snort rules file")
     parser.add_argument("-f", "--filter", help="bpf filter")
     parser.add_argument("-o", "--output", help="save alerts to json")
+    parser.add_argument("-e", "--events", action="store_true",
+                        help="show recent security events")
+    parser.add_argument("-l", "--listen", action="store_true",
+                        help="show listening ports")
     args = parser.parse_args()
 
-    if os.geteuid() != 0:
+    if args.events or (not args.interface and not args.listen):
+        show_security_events()
+        if not args.interface:
+            check_listening_ports()
+            return
+
+    if args.listen:
+        check_listening_ports()
+        return
+
+    is_root = (os.getuid() == 0) if hasattr(os, "getuid") else True
+    if not is_root:
         print("requires root for live capture", file=sys.stderr)
         sys.exit(1)
 

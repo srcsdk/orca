@@ -2,17 +2,30 @@
 """nvd api client for cve lookups"""
 
 import json
-import time
+import platform
 import sys
-
-try:
-    import requests
-except ImportError:
-    print("pip install requests", file=sys.stderr)
-    sys.exit(1)
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 
 NVD_API = "https://services.nvd.nist.gov/rest/json/cves/2.0"
-RATE_LIMIT = 6  # seconds between requests (no api key)
+RATE_LIMIT = 6
+
+
+def _api_request(params):
+    """make a request to the nvd api using urllib"""
+    query = urllib.parse.urlencode(params)
+    url = f"{NVD_API}?{query}"
+    req = urllib.request.Request(url)
+    req.add_header("User-Agent", "nvd-lookup/1.0")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return data
+    except (urllib.error.URLError, urllib.error.HTTPError) as e:
+        print(f"nvd api error: {e}", file=sys.stderr)
+        return None
 
 
 def search_cves(keyword, max_results=10):
@@ -21,14 +34,10 @@ def search_cves(keyword, max_results=10):
         "keywordSearch": keyword,
         "resultsPerPage": max_results,
     }
-    try:
-        resp = requests.get(NVD_API, params=params, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
+    data = _api_request(params)
+    if data:
         return parse_cve_response(data)
-    except requests.RequestException as e:
-        print(f"nvd api error: {e}", file=sys.stderr)
-        return []
+    return []
 
 
 def search_by_cpe(cpe_name, max_results=20):
@@ -37,28 +46,20 @@ def search_by_cpe(cpe_name, max_results=20):
         "cpeName": cpe_name,
         "resultsPerPage": max_results,
     }
-    try:
-        resp = requests.get(NVD_API, params=params, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
+    data = _api_request(params)
+    if data:
         return parse_cve_response(data)
-    except requests.RequestException as e:
-        print(f"nvd api error: {e}", file=sys.stderr)
-        return []
+    return []
 
 
 def get_cve(cve_id):
     """get details for a specific cve"""
     params = {"cveId": cve_id}
-    try:
-        resp = requests.get(NVD_API, params=params, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
+    data = _api_request(params)
+    if data:
         results = parse_cve_response(data)
         return results[0] if results else None
-    except requests.RequestException as e:
-        print(f"nvd api error: {e}", file=sys.stderr)
-        return None
+    return None
 
 
 def parse_cve_response(data):
@@ -68,14 +69,12 @@ def parse_cve_response(data):
         cve = vuln["cve"]
         cve_id = cve["id"]
 
-        # get description
         desc = ""
         for d in cve.get("descriptions", []):
             if d["lang"] == "en":
                 desc = d["value"]
                 break
 
-        # get cvss score
         score = 0
         severity = "unknown"
         metrics = cve.get("metrics", {})
@@ -87,7 +86,6 @@ def parse_cve_response(data):
                 severity = cvss.get("baseSeverity", "unknown").lower()
                 break
 
-        # get affected products (cpe)
         affected = []
         for config in cve.get("configurations", []):
             for node in config.get("nodes", []):
@@ -109,7 +107,6 @@ def parse_cve_response(data):
 
 def build_cpe(product, version=None, vendor=None):
     """build a cpe 2.3 string for nvd queries"""
-    # cpe:2.3:a:vendor:product:version:*:*:*:*:*:*:*
     v = vendor or "*"
     ver = version or "*"
     return f"cpe:2.3:a:{v}:{product}:{ver}:*:*:*:*:*:*:*"
@@ -123,34 +120,35 @@ def lookup_product(product, version=None):
         if results:
             return results
 
-    # fall back to keyword search
     query = f"{product} {version}" if version else product
     return search_cves(query)
 
 
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("usage: python nvd.py <product> [version]")
-        print("       python nvd.py --cve CVE-2021-44228")
-        sys.exit(1)
-
-    if sys.argv[1] == "--cve":
-        cve_id = sys.argv[2]
-        result = get_cve(cve_id)
-        if result:
-            print(f"\n{result['cve']} (CVSS {result['score']} - {result['severity']})")
-            print(f"  {result['description']}")
-            if result["affected"]:
-                print(f"  affected: {', '.join(result['affected'][:3])}")
-    else:
-        product = sys.argv[1]
-        version = sys.argv[2] if len(sys.argv) > 2 else None
-        results = lookup_product(product, version)
-        print(f"\n{len(results)} cves found for {product} {version or ''}")
-        for r in results:
-            sev = r["severity"].upper()
-            print(f"  [{sev}] {r['cve']} (CVSS {r['score']})")
-            print(f"    {r['description'][:80]}")
+def _default_search():
+    """search for recent critical cves on the current platform"""
+    os_name = platform.system().lower()
+    keyword_map = {
+        "linux": "linux kernel",
+        "windows": "microsoft windows",
+        "darwin": "apple macos",
+    }
+    keyword = keyword_map.get(os_name, "remote code execution")
+    print(f"[nvd] searching recent critical cves for: {keyword}")
+    print(f"[nvd] platform: {platform.system()} {platform.release()}")
+    print()
+    results = search_cves(keyword, max_results=10)
+    if not results:
+        print("[nvd] no results (api may be rate-limited, retry in a few seconds)")
+        return
+    critical = filter_by_severity(results, "critical")
+    high = filter_by_severity(results, "high")
+    display = critical if critical else high if high else results
+    display = sort_by_severity(display)
+    print(f"{len(display)} relevant cves found:")
+    for r in display:
+        sev = r["severity"].upper()
+        print(f"  [{sev}] {r['cve']} (CVSS {r['score']})")
+        print(f"    {r['description'][:100]}")
 
 
 SEVERITY_LEVELS = ["critical", "high", "medium", "low", "unknown"]
@@ -190,3 +188,27 @@ def sort_by_severity(results):
         idx = SEVERITY_LEVELS.index(sev) if sev in SEVERITY_LEVELS else 99
         return (idx, -r.get("score", 0))
     return sorted(results, key=sort_key)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        _default_search()
+        sys.exit(0)
+
+    if sys.argv[1] == "--cve":
+        cve_id = sys.argv[2]
+        result = get_cve(cve_id)
+        if result:
+            print(f"\n{result['cve']} (CVSS {result['score']} - {result['severity']})")
+            print(f"  {result['description']}")
+            if result["affected"]:
+                print(f"  affected: {', '.join(result['affected'][:3])}")
+    else:
+        product = sys.argv[1]
+        version = sys.argv[2] if len(sys.argv) > 2 else None
+        results = lookup_product(product, version)
+        print(f"\n{len(results)} cves found for {product} {version or ''}")
+        for r in results:
+            sev = r["severity"].upper()
+            print(f"  [{sev}] {r['cve']} (CVSS {r['score']})")
+            print(f"    {r['description'][:80]}")

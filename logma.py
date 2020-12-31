@@ -4,7 +4,9 @@
 import argparse
 import json
 import os
+import platform
 import re
+import subprocess
 import sys
 import time
 from datetime import datetime
@@ -234,6 +236,63 @@ class LogCollector:
                 print(f"  {sev}: {count}", file=sys.stderr)
 
 
+def get_default_log_sources():
+    """return default log file paths for the current platform"""
+    system = platform.system()
+    sources = []
+
+    if system == "Linux":
+        candidates = [
+            "/var/log/syslog", "/var/log/messages", "/var/log/auth.log",
+            "/var/log/kern.log", "/var/log/dmesg",
+        ]
+        for path in candidates:
+            if os.path.isfile(path) and os.access(path, os.R_OK):
+                sources.append(path)
+    elif system == "Darwin":
+        candidates = [
+            "/var/log/system.log", "/var/log/install.log",
+            "/var/log/wifi.log",
+        ]
+        for path in candidates:
+            if os.path.isfile(path) and os.access(path, os.R_OK):
+                sources.append(path)
+
+    return sources
+
+
+def collect_windows_events(collector, max_events=200):
+    """collect recent windows event log entries via wevtutil"""
+    channels = ["System", "Application", "Security"]
+    for channel in channels:
+        try:
+            result = subprocess.run(
+                ["wevtutil", "qe", channel, "/c:" + str(max_events),
+                 "/rd:true", "/f:text"],
+                capture_output=True, text=True, timeout=30
+            )
+            if result.returncode != 0:
+                continue
+            current_entry = []
+            for line in result.stdout.split("\n"):
+                line = line.strip()
+                if line.startswith("Event["):
+                    if current_entry:
+                        combined = " ".join(current_entry)
+                        record = parse_line(combined, f"eventlog:{channel}")
+                        collector.emit(record)
+                    current_entry = []
+                elif line:
+                    current_entry.append(line)
+            if current_entry:
+                combined = " ".join(current_entry)
+                record = parse_line(combined, f"eventlog:{channel}")
+                collector.emit(record)
+        except (subprocess.TimeoutExpired, OSError):
+            print(f"[error] failed to read {channel} event log",
+                  file=sys.stderr)
+
+
 def main():
     parser = argparse.ArgumentParser(description="centralized log collector")
     parser.add_argument("-f", "--file", action="append", help="log file (repeatable)")
@@ -245,9 +304,7 @@ def main():
     args = parser.parse_args()
 
     files = args.file or []
-    if not files and not args.directory:
-        parser.print_help()
-        sys.exit(1)
+    has_explicit_source = bool(files) or bool(args.directory)
 
     collector = LogCollector(
         output_file=args.output,
@@ -261,6 +318,30 @@ def main():
 
         for fp in files:
             collector.collect_file(fp)
+
+        # default behavior: scan system logs when no args given
+        if not has_explicit_source:
+            system = platform.system()
+            if system == "Windows":
+                print("[logma] collecting windows event logs",
+                      file=sys.stderr)
+                collect_windows_events(collector)
+            else:
+                defaults = get_default_log_sources()
+                if defaults:
+                    print(f"[logma] scanning {len(defaults)} system logs",
+                          file=sys.stderr)
+                    for fp in defaults:
+                        collector.collect_file(fp)
+                else:
+                    log_dir = "/var/log"
+                    if os.path.isdir(log_dir):
+                        print(f"[logma] scanning {log_dir}",
+                              file=sys.stderr)
+                        collector.collect_directory(log_dir, "*.log")
+                    else:
+                        print("[logma] no readable log sources found",
+                              file=sys.stderr)
 
         if args.tail and files:
             collector.tail_files(files)

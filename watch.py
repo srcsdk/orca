@@ -5,6 +5,7 @@ import argparse
 import csv
 import json
 import os
+import platform
 import signal
 import socket
 import struct
@@ -18,14 +19,16 @@ from datetime import datetime
 class ArpMonitor:
     """monitor arp traffic for spoofing indicators"""
 
-    def __init__(self, interface="eth0", baseline_file=None):
-        self.interface = interface
+    def __init__(self, interface=None, baseline_file=None):
+        self.interface = interface or self._default_interface()
         self.baseline = {}
         self.current = {}
         self.alerts = []
         self.mac_to_ips = defaultdict(set)
         self.arp_counts = defaultdict(int)
         self.running = False
+
+        self.system = platform.system()
 
         if baseline_file and os.path.exists(baseline_file):
             self.load_baseline(baseline_file)
@@ -43,23 +46,93 @@ class ArpMonitor:
             json.dump(self.current, f, indent=2)
         print(f"saved {len(self.current)} entries to {filename}")
 
-    def scan_arp_table(self):
-        """get current arp table from system"""
+    @staticmethod
+    def _default_interface():
+        """detect default network interface"""
+        system = platform.system()
         try:
-            result = subprocess.run(
-                ["ip", "neigh", "show"],
-                capture_output=True, text=True, timeout=5
-            )
-            self.current = {}
-            for line in result.stdout.strip().split("\n"):
-                parts = line.split()
-                if len(parts) >= 4 and "lladdr" in line:
-                    ip = parts[0]
-                    mac_idx = parts.index("lladdr") + 1
-                    if mac_idx < len(parts):
-                        mac = parts[mac_idx]
-                        self.current[ip] = mac
-                        self.mac_to_ips[mac].add(ip)
+            if system == "Linux":
+                result = subprocess.run(
+                    ["ip", "route", "show", "default"],
+                    capture_output=True, text=True, timeout=5
+                )
+                parts = result.stdout.split()
+                if "dev" in parts:
+                    return parts[parts.index("dev") + 1]
+            elif system == "Darwin":
+                result = subprocess.run(
+                    ["route", "-n", "get", "default"],
+                    capture_output=True, text=True, timeout=5
+                )
+                for line in result.stdout.split("\n"):
+                    if "interface:" in line:
+                        return line.split()[-1]
+            elif system == "Windows":
+                result = subprocess.run(
+                    ["netsh", "interface", "show", "interface"],
+                    capture_output=True, text=True, timeout=5
+                )
+                for line in result.stdout.split("\n"):
+                    if "Connected" in line:
+                        return line.split()[-1]
+        except (subprocess.TimeoutExpired, OSError, IndexError):
+            pass
+        defaults = {"Linux": "eth0", "Darwin": "en0", "Windows": "Ethernet"}
+        return defaults.get(system, "eth0")
+
+    def scan_arp_table(self):
+        """get current arp table from system (cross-platform)"""
+        self.current = {}
+        try:
+            if self.system == "Linux":
+                result = subprocess.run(
+                    ["ip", "neigh", "show"],
+                    capture_output=True, text=True, timeout=5
+                )
+                for line in result.stdout.strip().split("\n"):
+                    parts = line.split()
+                    if len(parts) >= 4 and "lladdr" in line:
+                        ip = parts[0]
+                        mac_idx = parts.index("lladdr") + 1
+                        if mac_idx < len(parts):
+                            mac = parts[mac_idx]
+                            self.current[ip] = mac
+                            self.mac_to_ips[mac].add(ip)
+            elif self.system in ("Darwin", "Windows"):
+                result = subprocess.run(
+                    ["arp", "-a"],
+                    capture_output=True, text=True, timeout=5
+                )
+                for line in result.stdout.strip().split("\n"):
+                    parts = line.split()
+                    if len(parts) < 3:
+                        continue
+                    if self.system == "Darwin":
+                        # format: host (ip) at mac on iface
+                        ip_match = None
+                        mac_val = None
+                        for j, p in enumerate(parts):
+                            if p.startswith("(") and p.endswith(")"):
+                                ip_match = p.strip("()")
+                            if p == "at" and j + 1 < len(parts):
+                                mac_val = parts[j + 1]
+                        if ip_match and mac_val and mac_val != "(incomplete)":
+                            self.current[ip_match] = mac_val
+                            self.mac_to_ips[mac_val].add(ip_match)
+                    else:
+                        # windows: ip, mac, type columns
+                        import re
+                        ip_re = re.match(r'\s*(\d+\.\d+\.\d+\.\d+)', line)
+                        mac_re = re.search(
+                            r'([0-9a-f]{2}[:-][0-9a-f]{2}[:-][0-9a-f]{2}'
+                            r'[:-][0-9a-f]{2}[:-][0-9a-f]{2}[:-][0-9a-f]{2})',
+                            line, re.IGNORECASE
+                        )
+                        if ip_re and mac_re:
+                            ip = ip_re.group(1)
+                            mac = mac_re.group(1)
+                            self.current[ip] = mac
+                            self.mac_to_ips[mac].add(ip)
         except (subprocess.TimeoutExpired, OSError):
             pass
 
@@ -153,11 +226,12 @@ class ArpMonitor:
 
 
 def main():
+    default_iface = ArpMonitor._default_interface()
     parser = argparse.ArgumentParser(
         description="arp spoofing detection"
     )
-    parser.add_argument("-i", "--interface", default="eth0",
-                        help="network interface")
+    parser.add_argument("-i", "--interface", default=default_iface,
+                        help=f"network interface (default: {default_iface})")
     parser.add_argument("--interval", type=int, default=5,
                         help="check interval in seconds (default: 5)")
     parser.add_argument("-b", "--baseline", type=str,
@@ -182,6 +256,11 @@ def main():
     if args.show:
         monitor.print_table()
         return
+
+    # default: show arp table then monitor
+    if not any([args.baseline, args.output, args.csv]):
+        monitor.print_table()
+        print()
 
     monitor.monitor(args.interval)
 

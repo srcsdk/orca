@@ -3,7 +3,9 @@
 
 import argparse
 import json
+import platform
 import socket
+import struct
 import subprocess
 import sys
 import time
@@ -11,6 +13,137 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 RECORD_TYPES = ["A", "AAAA", "MX", "NS", "TXT", "SOA", "CNAME", "SRV"]
+
+# dns record type codes
+DNS_TYPES = {
+    "A": 1, "NS": 2, "CNAME": 5, "SOA": 6, "MX": 15,
+    "TXT": 16, "AAAA": 28, "SRV": 33,
+}
+
+
+def _has_command(name):
+    """check if a command is available on the system"""
+    try:
+        subprocess.run(
+            ["which", name] if platform.system() != "Windows" else ["where", name],
+            capture_output=True, timeout=5
+        )
+        return True
+    except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
+        return False
+
+
+def _build_dns_query(domain, rtype):
+    """build a raw dns query packet"""
+    tid = struct.pack("!H", 0x1234)
+    flags = struct.pack("!H", 0x0100)  # standard query, recursion desired
+    counts = struct.pack("!HHHH", 1, 0, 0, 0)
+    qname = b""
+    for label in domain.split("."):
+        qname += struct.pack("B", len(label)) + label.encode()
+    qname += b"\x00"
+    qtype = struct.pack("!H", DNS_TYPES.get(rtype, 1))
+    qclass = struct.pack("!H", 1)  # IN class
+    return tid + flags + counts + qname + qtype + qclass
+
+
+def _parse_dns_name(data, offset):
+    """parse a dns name from response data handling compression"""
+    labels = []
+    jumped = False
+    original_offset = offset
+    max_jumps = 20
+    jumps = 0
+    while jumps < max_jumps:
+        if offset >= len(data):
+            break
+        length = data[offset]
+        if length == 0:
+            offset += 1
+            break
+        if (length & 0xC0) == 0xC0:
+            if not jumped:
+                original_offset = offset + 2
+            pointer = struct.unpack("!H", data[offset:offset + 2])[0] & 0x3FFF
+            offset = pointer
+            jumped = True
+            jumps += 1
+            continue
+        offset += 1
+        labels.append(data[offset:offset + length].decode("ascii", errors="replace"))
+        offset += length
+    name = ".".join(labels)
+    return name, original_offset if jumped else offset
+
+
+def _parse_dns_response(data, rtype):
+    """parse dns response and extract answers"""
+    if len(data) < 12:
+        return []
+    ancount = struct.unpack("!H", data[4:6])[0]
+    offset = 12
+    # skip question section
+    while offset < len(data) and data[offset] != 0:
+        if (data[offset] & 0xC0) == 0xC0:
+            offset += 2
+            break
+        offset += data[offset] + 1
+    else:
+        offset += 1
+    offset += 4  # skip qtype and qclass
+
+    results = []
+    for _ in range(ancount):
+        if offset >= len(data):
+            break
+        _, offset = _parse_dns_name(data, offset)
+        if offset + 10 > len(data):
+            break
+        atype, aclass, ttl, rdlength = struct.unpack("!HHIH", data[offset:offset + 10])
+        offset += 10
+        rdata = data[offset:offset + rdlength]
+        offset += rdlength
+
+        type_code = DNS_TYPES.get(rtype, 1)
+        if atype == type_code:
+            if rtype == "A" and len(rdata) == 4:
+                results.append(socket.inet_ntoa(rdata))
+            elif rtype == "AAAA" and len(rdata) == 16:
+                results.append(socket.inet_ntop(socket.AF_INET6, rdata))
+            elif rtype == "MX" and len(rdata) > 2:
+                pref = struct.unpack("!H", rdata[:2])[0]
+                mx_name, _ = _parse_dns_name(data, offset - rdlength + 2)
+                results.append(f"{pref} {mx_name}")
+            elif rtype in ("NS", "CNAME"):
+                name, _ = _parse_dns_name(data, offset - rdlength)
+                results.append(name)
+            elif rtype == "TXT":
+                txt = ""
+                pos = 0
+                while pos < len(rdata):
+                    tlen = rdata[pos]
+                    txt += rdata[pos + 1:pos + 1 + tlen].decode("utf-8", errors="replace")
+                    pos += 1 + tlen
+                results.append(txt)
+            elif rtype == "SOA":
+                mname, new_off = _parse_dns_name(data, offset - rdlength)
+                rname, new_off = _parse_dns_name(data, new_off)
+                results.append(f"{mname} {rname}")
+    return results
+
+
+def socket_dns_query(domain, rtype, server="8.8.8.8", timeout=5):
+    """query dns using raw udp socket (cross-platform)"""
+    try:
+        query = _build_dns_query(domain, rtype)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(timeout)
+        sock.sendto(query, (server, 53))
+        data, _ = sock.recvfrom(4096)
+        sock.close()
+        return _parse_dns_response(data, rtype)
+    except (socket.timeout, OSError):
+        return []
 
 
 def dig_query(domain, rtype, server=None, timeout=5, retries=2):
@@ -36,11 +169,19 @@ def dig_query(domain, rtype, server=None, timeout=5, retries=2):
     return []
 
 
+def dns_query(domain, rtype, server=None, timeout=5):
+    """query dns using best available method for the platform"""
+    if _has_command("dig"):
+        return dig_query(domain, rtype, server, timeout)
+    dns_server = server or "8.8.8.8"
+    return socket_dns_query(domain, rtype, dns_server, timeout)
+
+
 def enumerate_records(domain, server=None):
     """enumerate all dns record types for a domain"""
     records = {}
     for rtype in RECORD_TYPES:
-        results = dig_query(domain, rtype, server)
+        results = dns_query(domain, rtype, server)
         if results:
             records[rtype] = results
     return records
@@ -58,7 +199,7 @@ def attempt_zone_transfer(domain, nameserver):
         lines = result.stdout.strip().split("\n")
         records = [l for l in lines if l and not l.startswith(";")]
         return records if records else None
-    except (subprocess.TimeoutExpired, OSError):
+    except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
         return None
 
 
@@ -77,7 +218,7 @@ def brute_subdomains(domain, wordlist, threads=20, server=None):
 
     def check_subdomain(sub):
         fqdn = f"{sub}.{domain}"
-        results = dig_query(fqdn, "A", server, timeout=3)
+        results = dns_query(fqdn, "A", server, timeout=3)
         if results:
             return fqdn, results
         return None, None
@@ -106,7 +247,7 @@ def load_wordlist(filename):
 
 
 def whois_lookup(domain):
-    """basic whois information"""
+    """basic whois information (requires whois command)"""
     try:
         result = subprocess.run(
             ["whois", domain],
@@ -128,13 +269,113 @@ def whois_lookup(domain):
                     else:
                         info[key] = value
         return info
-    except (subprocess.TimeoutExpired, OSError):
+    except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
         return {}
+
+
+def socket_whois(domain):
+    """whois lookup using raw socket (cross-platform fallback)"""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(10)
+        sock.connect(("whois.iana.org", 43))
+        sock.sendall((domain + "\r\n").encode())
+        response = b""
+        while True:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            response += chunk
+        sock.close()
+        text = response.decode("utf-8", errors="replace")
+
+        # find the registrar whois server and query it
+        for line in text.split("\n"):
+            if line.lower().startswith("refer:"):
+                whois_server = line.split(":", 1)[1].strip()
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(10)
+                sock.connect((whois_server, 43))
+                sock.sendall((domain + "\r\n").encode())
+                response = b""
+                while True:
+                    chunk = sock.recv(4096)
+                    if not chunk:
+                        break
+                    response += chunk
+                sock.close()
+                text = response.decode("utf-8", errors="replace")
+                break
+
+        info = {}
+        for line in text.split("\n"):
+            line = line.strip()
+            for field in ["Registrar:", "Creation Date:", "Updated Date:",
+                          "Name Server:", "DNSSEC:"]:
+                if line.startswith(field):
+                    key = field.rstrip(":").lower().replace(" ", "_")
+                    value = line.split(":", 1)[1].strip()
+                    if key in info:
+                        if isinstance(info[key], list):
+                            info[key].append(value)
+                        else:
+                            info[key] = [info[key], value]
+                    else:
+                        info[key] = value
+        return info
+    except (socket.timeout, OSError):
+        return {}
+
+
+def do_whois(domain):
+    """whois lookup using best available method"""
+    if _has_command("whois"):
+        return whois_lookup(domain)
+    return socket_whois(domain)
+
+
+def default_scan():
+    """run a default dns scan on localhost"""
+    print("no domain specified, running local dns reconnaissance")
+    print(f"platform: {platform.system()}\n")
+
+    hostname = socket.gethostname()
+    print(f"hostname: {hostname}")
+
+    try:
+        local_ip = socket.gethostbyname(hostname)
+        print(f"local ip: {local_ip}")
+    except socket.gaierror:
+        local_ip = "127.0.0.1"
+        print(f"local ip: {local_ip} (fallback)")
+
+    reverse = reverse_lookup(local_ip)
+    if reverse:
+        print(f"reverse dns: {reverse}")
+
+    print(f"\nresolving common dns servers...")
+    test_domains = ["dns.google", "one.one.one.one", "resolver1.opendns.com"]
+    for domain in test_domains:
+        try:
+            ip = socket.gethostbyname(domain)
+            print(f"  {domain} -> {ip}")
+        except socket.gaierror:
+            print(f"  {domain} -> unresolvable")
+
+    print(f"\nlocal dns resolution test:")
+    test_hosts = ["localhost", "google.com", "github.com"]
+    for host in test_hosts:
+        try:
+            ip = socket.gethostbyname(host)
+            print(f"  {host} -> {ip}")
+        except socket.gaierror:
+            print(f"  {host} -> failed")
 
 
 def main():
     parser = argparse.ArgumentParser(description="dns reconnaissance")
-    parser.add_argument("domain", help="target domain")
+    parser.add_argument("domain", nargs="?", default=None,
+                        help="target domain (default: local dns scan)")
     parser.add_argument("-s", "--server", type=str,
                         help="dns server to query")
     parser.add_argument("-w", "--wordlist", type=str,
@@ -150,6 +391,14 @@ def main():
 
     args = parser.parse_args()
 
+    if args.domain is None:
+        default_scan()
+        sys.exit(0)
+
+    # reduce threads on windows
+    if platform.system() == "Windows":
+        args.threads = min(args.threads, 15)
+
     results = {"domain": args.domain, "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S")}
 
     # enumerate dns records
@@ -164,25 +413,27 @@ def main():
 
     # zone transfer
     if args.axfr and "NS" in records:
-        print("\nattempting zone transfers...")
-        for ns in records["NS"]:
-            ns = ns.rstrip(".")
-            print(f"  trying {ns}...")
-            zone = attempt_zone_transfer(args.domain, ns)
-            if zone:
-                print(f"  zone transfer successful from {ns}!")
-                results["zone_transfer"] = {"server": ns, "records": zone}
-                for line in zone[:20]:
-                    print(f"    {line}")
-                break
-            else:
-                print(f"  failed (transfer refused or timeout)")
+        if not _has_command("dig"):
+            print("\nzone transfer requires dig (not available on this platform)")
+        else:
+            print("\nattempting zone transfers...")
+            for ns in records["NS"]:
+                ns = ns.rstrip(".")
+                print(f"  trying {ns}...")
+                zone = attempt_zone_transfer(args.domain, ns)
+                if zone:
+                    print(f"  zone transfer successful from {ns}!")
+                    results["zone_transfer"] = {"server": ns, "records": zone}
+                    for line in zone[:20]:
+                        print(f"    {line}")
+                    break
+                else:
+                    print(f"  failed (transfer refused or timeout)")
 
     # subdomain brute force
     if args.wordlist:
         wordlist = load_wordlist(args.wordlist)
         if not wordlist:
-            # default minimal wordlist
             wordlist = [
                 "www", "mail", "ftp", "smtp", "pop", "ns1", "ns2",
                 "webmail", "remote", "admin", "blog", "dev", "staging",
@@ -198,7 +449,7 @@ def main():
     # whois
     if args.whois:
         print(f"\nwhois {args.domain}:")
-        info = whois_lookup(args.domain)
+        info = do_whois(args.domain)
         results["whois"] = info
         for k, v in info.items():
             print(f"  {k}: {v}")

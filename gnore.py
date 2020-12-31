@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import platform
 import socket
 import ssl
 import sys
@@ -273,7 +274,8 @@ def print_results(result):
 
 def main():
     parser = argparse.ArgumentParser(description="tls/ssl scanner")
-    parser.add_argument("host", help="target host")
+    parser.add_argument("host", nargs="?", default=None,
+                        help="target host (default: example.com)")
     parser.add_argument("-p", "--port", type=int, default=443,
                         help="port (default: 443)")
     parser.add_argument("--ciphers", action="store_true",
@@ -284,6 +286,11 @@ def main():
                         help="save results to json")
 
     args = parser.parse_args()
+
+    if args.host is None:
+        args.host = "example.com"
+        print(f"no target specified, scanning {args.host}:{args.port}")
+        print(f"platform: {platform.system()}")
 
     print(f"scanning {args.host}:{args.port}...")
 

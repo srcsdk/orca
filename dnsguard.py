@@ -5,6 +5,7 @@ import argparse
 import json
 import math
 import os
+import platform
 import re
 import signal
 import subprocess
@@ -264,8 +265,51 @@ def parse_tcpdump_dns(line):
     return None, None
 
 
+def get_default_interface():
+    """detect default network interface"""
+    system = platform.system()
+    try:
+        if system == "Linux":
+            result = subprocess.run(
+                ["ip", "route", "show", "default"],
+                capture_output=True, text=True, timeout=5
+            )
+            parts = result.stdout.split()
+            if "dev" in parts:
+                return parts[parts.index("dev") + 1]
+        elif system == "Darwin":
+            result = subprocess.run(
+                ["route", "-n", "get", "default"],
+                capture_output=True, text=True, timeout=5
+            )
+            for line in result.stdout.split("\n"):
+                if "interface:" in line:
+                    return line.split()[-1]
+    except (subprocess.TimeoutExpired, OSError, IndexError):
+        pass
+    defaults = {"Linux": "eth0", "Darwin": "en0", "Windows": "Ethernet"}
+    return defaults.get(system, "eth0")
+
+
+def is_admin():
+    """check for root/admin privileges"""
+    if platform.system() == "Windows":
+        try:
+            import ctypes
+            return ctypes.windll.shell32.IsUserAnAdmin() != 0
+        except (AttributeError, OSError):
+            return False
+    return os.geteuid() == 0
+
+
 def monitor_live(interface, monitor):
     """capture live dns traffic"""
+    system = platform.system()
+    if system == "Windows":
+        print("tcpdump not available on windows", file=sys.stderr)
+        print("use windump or tshark for live dns capture", file=sys.stderr)
+        sys.exit(1)
+
     cmd = ["tcpdump", "-i", interface, "-nn", "-l", "port", "53"]
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
@@ -285,10 +329,54 @@ def monitor_live(interface, monitor):
     proc.wait()
 
 
+def run_demo(monitor):
+    """run demo analysis with sample dns queries"""
+    import random
+    print("running demo mode (no root privileges)")
+    print("analyzing sample dns queries for anomalies...\n")
+
+    normal_domains = [
+        "google.com", "github.com", "stackoverflow.com", "python.org",
+        "wikipedia.org", "amazon.com", "cloudflare.com", "mozilla.org",
+        "reddit.com", "arxiv.org", "ubuntu.com", "kernel.org",
+    ]
+    dga_domains = [
+        "xkjf8qmzpwvn3r.malware.net", "q9hx7bvmzt4kp2.evil.com",
+        "rnvbx8kz3qfhwm.botnet.org", "zpqmkjx7vn4bhr.c2server.net",
+    ]
+    tunnel_domains = [
+        "4a6f686e20446f65206a6f686e40656d61696c2e636f6d.data.evil.com",
+        "U29tZSBzZWNyZXQgZGF0YSBlbmNvZGVkIGluIGJhc2U2NA.exfil.bad.org",
+    ]
+    sources = ["192.168.1.10", "192.168.1.20", "10.0.0.5", "172.16.0.100"]
+    base_time = time.time() - 60
+
+    for i in range(80):
+        src = random.choice(sources)
+        domain = random.choice(normal_domains)
+        monitor.process_query(src, domain, base_time + i * 0.5)
+
+    for domain in dga_domains:
+        src = random.choice(sources)
+        monitor.process_query(src, domain, base_time + 50)
+
+    for domain in tunnel_domains:
+        monitor.process_query("10.0.0.5", domain, base_time + 55)
+
+    # simulate high rate from one source
+    for i in range(120):
+        monitor.process_query(
+            "172.16.0.100",
+            f"sub{i}.rapid-query.suspicious.com",
+            base_time + 30 + i * 0.1
+        )
+
+
 def main():
+    default_iface = get_default_interface()
     parser = argparse.ArgumentParser(description="dns monitoring and anomaly detection")
-    parser.add_argument("-i", "--interface", default="eth0",
-                        help="network interface")
+    parser.add_argument("-i", "--interface", default=default_iface,
+                        help=f"network interface (default: {default_iface})")
     parser.add_argument("--entropy", type=float, default=3.5,
                         help="entropy threshold for dga detection")
     parser.add_argument("--rate-limit", type=int, default=100,
@@ -296,11 +384,9 @@ def main():
     parser.add_argument("--tunnel-length", type=int, default=60,
                         help="domain length threshold for tunnel detection")
     parser.add_argument("-o", "--output", help="save alerts to json file")
+    parser.add_argument("--demo", action="store_true",
+                        help="run with sample demo data")
     args = parser.parse_args()
-
-    if os.geteuid() != 0:
-        print("requires root for live capture", file=sys.stderr)
-        sys.exit(1)
 
     monitor = DnsMonitor(
         entropy_threshold=args.entropy,
@@ -308,15 +394,18 @@ def main():
         tunnel_length=args.tunnel_length,
     )
 
-    print(f"dns monitor started on {args.interface}")
-    print(f"entropy threshold: {args.entropy}")
-    print(f"rate limit: {args.rate_limit} queries/min")
-    print()
+    if args.demo or not is_admin():
+        run_demo(monitor)
+    else:
+        print(f"dns monitor started on {args.interface}")
+        print(f"entropy threshold: {args.entropy}")
+        print(f"rate limit: {args.rate_limit} queries/min")
+        print()
 
-    try:
-        monitor_live(args.interface, monitor)
-    except KeyboardInterrupt:
-        pass
+        try:
+            monitor_live(args.interface, monitor)
+        except KeyboardInterrupt:
+            pass
 
     stats = monitor.stats()
     print(f"\n--- dns monitor summary ---")

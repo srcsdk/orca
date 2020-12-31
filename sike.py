@@ -2,21 +2,15 @@
 """ml model evasion testing for anomaly detection systems"""
 
 import argparse
-import copy
 import json
 import os
 import pickle
+import platform
 import sys
 import time
 from pathlib import Path
 
 import numpy as np
-
-try:
-    from sklearn.preprocessing import StandardScaler
-except ImportError:
-    print("[error] sklearn required: pip install scikit-learn", file=sys.stderr)
-    sys.exit(1)
 
 
 SAFETY_DISCLAIMER = (
@@ -87,7 +81,7 @@ class FeaturePerturbation:
                 "features": current.tolist(),
             })
 
-            if pred == 1:  # successfully evaded (classified as normal)
+            if pred == 1:
                 return current, trajectory
 
             gradients = self.gradient_estimate(current)
@@ -95,7 +89,6 @@ class FeaturePerturbation:
             if grad_norm > 0:
                 current = current + step_size * (gradients / grad_norm)
 
-            # keep features physically plausible
             current = np.maximum(current, 0)
 
         return current, trajectory
@@ -155,48 +148,18 @@ class TrafficMutator:
         """generate a synthetic anomalous flow"""
         if attack_type == "scan":
             return np.array([
-                0.5,      # short duration
-                200,      # low src bytes
-                50,       # very low dst bytes
-                100,      # many src packets
-                5,        # few dst packets
-                4.0,      # high byte ratio
-                20.0,     # high packet ratio
-                2.0,      # small src packets
-                10.0,     # small dst packets
-                5.0,      # high port entropy
-                50,       # many unique ports
-                2.5,      # small avg packet
+                0.5, 200, 50, 100, 5, 4.0, 20.0,
+                2.0, 10.0, 5.0, 50, 2.5,
             ])
         elif attack_type == "exfil":
             return np.array([
-                300,      # long duration
-                5000000,  # very high src bytes
-                1000,     # low dst bytes
-                5000,     # many src packets
-                10,       # few dst packets
-                5000.0,   # extreme byte ratio
-                500.0,    # extreme packet ratio
-                1000.0,   # large src packets
-                100.0,    # small dst packets
-                0.5,      # low port entropy
-                1,        # single port
-                1000.0,   # large avg packet
+                300, 5000000, 1000, 5000, 10, 5000.0, 500.0,
+                1000.0, 100.0, 0.5, 1, 1000.0,
             ])
-        else:  # c2 beacon
+        else:
             return np.array([
-                60,       # regular interval
-                500,      # small symmetric
-                500,      # small symmetric
-                5,        # few packets
-                5,        # few packets
-                1.0,      # even ratio
-                1.0,      # even ratio
-                100.0,    # consistent size
-                100.0,    # consistent size
-                0.1,      # single port
-                1,        # single port
-                100.0,    # consistent
+                60, 500, 500, 5, 5, 1.0, 1.0,
+                100.0, 100.0, 0.1, 1, 100.0,
             ])
 
     def mutate_to_evade(self, flow_features, strategy="blend"):
@@ -204,7 +167,6 @@ class TrafficMutator:
         mutated = flow_features.copy()
 
         if strategy == "blend":
-            # blend anomalous features toward normal ranges
             normal_center = np.array([
                 30, 3000, 10000, 20, 30, 0.3, 0.67,
                 150, 333, 2.5, 2, 250,
@@ -213,14 +175,12 @@ class TrafficMutator:
             mutated = flow_features * (1 - blend_factor) + normal_center * blend_factor
 
         elif strategy == "padding":
-            # add padding bytes to normalize ratios
-            mutated[2] = mutated[1] * (0.8 + self.rng.random() * 1.5)  # balance bytes
-            mutated[4] = mutated[3] * (0.5 + self.rng.random())  # balance packets
+            mutated[2] = mutated[1] * (0.8 + self.rng.random() * 1.5)
+            mutated[4] = mutated[3] * (0.5 + self.rng.random())
             mutated[5] = mutated[1] / max(mutated[2], 1)
             mutated[6] = mutated[3] / max(mutated[4], 1)
 
         elif strategy == "split":
-            # split into multiple smaller flows
             split_factor = self.rng.randint(2, 6)
             mutated[1] /= split_factor
             mutated[2] /= split_factor
@@ -229,7 +189,6 @@ class TrafficMutator:
             mutated[0] /= split_factor
 
         elif strategy == "noise":
-            # add gaussian noise
             noise = self.rng.normal(0, 0.3, size=mutated.shape) * np.abs(mutated)
             mutated = np.maximum(mutated + noise, 0)
 
@@ -289,11 +248,49 @@ def print_evasion_report(results, as_json=False):
               f"range=[{stats['min_score']:.3f}, {stats['max_score']:.3f}]")
 
 
+def _run_demo():
+    """run demo with an in-memory model (no file required)"""
+    print(f"[sike] platform: {platform.system()} {platform.release()}")
+    print(f"[sike] {SAFETY_DISCLAIMER[:80]}...")
+    print()
+    print("[sike] training demo model on synthetic data...")
+
+    # import probaduce components inline to build a model
+    sys.path.insert(0, str(Path(__file__).parent))
+    try:
+        from probaduce import AnomalyDetector, generate_synthetic_flows
+    except ImportError:
+        print("[error] probaduce.py required for demo mode")
+        sys.exit(1)
+
+    flows = generate_synthetic_flows(n_normal=300, n_anomaly=15)
+    detector = AnomalyDetector(contamination=0.05)
+    detector.train(flows)
+
+    model = detector.model
+    scaler = detector.scaler
+    print()
+
+    mutator = TrafficMutator(model, scaler)
+    for attack in ["scan", "exfil", "c2"]:
+        results = mutator.evaluate_mutations(attack, n_mutations=30)
+        print_evasion_report(results)
+
+    print("\n[sike] model robustness summary:")
+    for attack in ["scan", "exfil", "c2"]:
+        results = mutator.evaluate_mutations(attack, n_mutations=30)
+        max_evasion = max(
+            s["evasion_rate"] for s in results["strategies"].values()
+        )
+        print(f"  {attack}: max evasion rate = {max_evasion * 100:.1f}%")
+
+
 def main():
     parser = argparse.ArgumentParser(description="ml model evasion testing")
-    parser.add_argument("command", choices=["test", "boundary", "perturb", "full"],
-                        help="test mode")
-    parser.add_argument("-m", "--model", required=True, help="model file (probaduce format)")
+    parser.add_argument("command", nargs="?", default="demo",
+                        choices=["test", "boundary", "perturb", "full", "demo"],
+                        help="test mode (default: demo)")
+    parser.add_argument("-m", "--model", help="model file (probaduce format)")
     parser.add_argument("--attack", default="scan",
                         choices=["scan", "exfil", "c2"],
                         help="attack type to test")
@@ -303,6 +300,15 @@ def main():
     args = parser.parse_args()
 
     verify_safety()
+
+    if args.command == "demo":
+        _run_demo()
+        return
+
+    if not args.model:
+        print("[error] --model required for non-demo modes")
+        sys.exit(1)
+
     print(f"[sike] {SAFETY_DISCLAIMER[:80]}...")
     print()
 

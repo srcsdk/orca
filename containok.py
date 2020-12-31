@@ -4,11 +4,14 @@
 import argparse
 import json
 import os
+import platform
 import re
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+
+PLATFORM = platform.system().lower()
 
 
 class Finding:
@@ -57,11 +60,22 @@ class DockerScanner:
             self.add_finding("info", "runtime", "docker not available or not running")
         return self._docker_available
 
+    def _daemon_config_path(self):
+        """return platform-specific daemon.json path"""
+        if PLATFORM == "windows":
+            return Path(os.environ.get("PROGRAMDATA", "C:\\ProgramData"),
+                        "docker", "config", "daemon.json")
+        elif PLATFORM == "darwin":
+            home = Path.home()
+            return home / ".docker" / "daemon.json"
+        return Path("/etc/docker/daemon.json")
+
     def audit_daemon(self):
         """audit docker daemon configuration"""
-        daemon_json = Path("/etc/docker/daemon.json")
+        daemon_json = self._daemon_config_path()
         if not daemon_json.exists():
-            self.add_finding("medium", "daemon", "no daemon.json (using defaults)")
+            self.add_finding("medium", "daemon",
+                             f"no daemon.json at {daemon_json} (using defaults)")
             return
 
         try:
@@ -80,21 +94,25 @@ class DockerScanner:
             if key not in config:
                 self.add_finding(severity, "daemon", message)
             else:
-                self.add_finding("info", "daemon", f"{key} configured: {config[key]}")
+                self.add_finding("info", "daemon",
+                                 f"{key} configured: {config[key]}")
 
         if config.get("icc") is not False:
-            self.add_finding("medium", "daemon", "inter-container communication not disabled")
+            self.add_finding("medium", "daemon",
+                             "inter-container communication not disabled")
 
-        # check socket permissions
-        socket_path = Path("/var/run/docker.sock")
-        if socket_path.exists():
-            stat = socket_path.stat()
-            perms = oct(stat.st_mode)[-3:]
-            if perms not in ("660", "600"):
-                self.add_finding("high", "daemon",
-                                 f"docker socket permissions too open: {perms}")
-            else:
-                self.add_finding("info", "daemon", f"socket permissions: {perms}")
+        # check socket permissions (linux/macos only)
+        if PLATFORM != "windows":
+            socket_path = Path("/var/run/docker.sock")
+            if socket_path.exists():
+                stat = socket_path.stat()
+                perms = oct(stat.st_mode)[-3:]
+                if perms not in ("660", "600"):
+                    self.add_finding("high", "daemon",
+                                     f"docker socket permissions too open: {perms}")
+                else:
+                    self.add_finding("info", "daemon",
+                                     f"socket permissions: {perms}")
 
     def audit_containers(self):
         """audit running containers"""
@@ -321,29 +339,86 @@ def print_report(report, as_json=False):
         print(f"  [{sev}] [{f['category']}] {f['message']}{res}")
 
 
+def show_docker_info():
+    """show docker environment info as default action"""
+    print(f"container security scanner")
+    print(f"platform: {PLATFORM}\n")
+
+    try:
+        result = subprocess.run(
+            ["docker", "version", "--format",
+             "{{.Server.Version}}"],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode == 0:
+            print(f"docker version: {result.stdout.strip()}")
+        else:
+            print("docker: not available or not running")
+            print("install docker to use container scanning features")
+            return
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        print("docker: not installed")
+        print("install docker to use container scanning features")
+        return
+
+    # show running containers
+    try:
+        result = subprocess.run(
+            ["docker", "ps", "--format",
+             "table {{.ID}}\t{{.Image}}\t{{.Status}}\t{{.Names}}"],
+            capture_output=True, text=True, timeout=10
+        )
+        print(f"\nrunning containers:")
+        print(result.stdout.strip() or "  (none)")
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    # show images
+    try:
+        result = subprocess.run(
+            ["docker", "images", "--format",
+             "table {{.Repository}}\t{{.Tag}}\t{{.Size}}"],
+            capture_output=True, text=True, timeout=10
+        )
+        print(f"\nimages:")
+        print(result.stdout.strip() or "  (none)")
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    print("\nuse -m all to run full security audit")
+    print("use --help to see all options")
+
+
 def main():
     parser = argparse.ArgumentParser(description="container security scanner")
-    parser.add_argument("-m", "--mode", default="all",
-                        choices=["daemon", "containers", "dockerfile", "compose", "all"],
+    parser.add_argument("-m", "--mode", default=None,
+                        choices=["daemon", "containers", "dockerfile",
+                                 "compose", "all"],
                         help="scan mode")
     parser.add_argument("-f", "--file", help="dockerfile or compose file path")
     parser.add_argument("-o", "--output", help="output report file")
     parser.add_argument("--json", action="store_true", help="json output")
     args = parser.parse_args()
 
+    # default behavior: show docker info and container summary
+    if not args.mode and not args.file:
+        show_docker_info()
+        return
+
+    mode = args.mode or "all"
     scanner = DockerScanner()
 
-    if args.mode in ("daemon", "all"):
+    if mode in ("daemon", "all"):
         scanner.audit_daemon()
 
-    if args.mode in ("containers", "all"):
+    if mode in ("containers", "all"):
         scanner.audit_containers()
 
-    if args.mode == "dockerfile" and args.file:
+    if mode == "dockerfile" and args.file:
         scanner.lint_dockerfile(args.file)
-    elif args.mode == "compose" and args.file:
+    elif mode == "compose" and args.file:
         scanner.audit_compose(args.file)
-    elif args.mode == "all" and args.file:
+    elif mode == "all" and args.file:
         if "compose" in args.file.lower() or args.file.endswith(".yml"):
             scanner.audit_compose(args.file)
         else:

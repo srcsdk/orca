@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+import platform
 import re
 import sys
 import time
@@ -259,9 +260,31 @@ class WebSpider:
         }
 
 
+def print_usage_demo():
+    """show usage information with example commands"""
+    print("web application scanner and fuzzer")
+    print()
+    print("usage examples:")
+    print(f"  {sys.argv[0]} http://localhost")
+    print(f"  {sys.argv[0]} http://localhost:8080 -d 2")
+    print(f"  {sys.argv[0]} http://target.local --dirs-only")
+    print(f"  {sys.argv[0]} http://target.local --no-fuzz -o report.json")
+    print()
+    print("features:")
+    print("  - directory enumeration (common paths)")
+    print("  - recursive link crawling with depth control")
+    print("  - form discovery and parameter extraction")
+    print("  - xss and sql injection testing")
+    print()
+    os_name = platform.system()
+    print(f"platform: {os_name}")
+    print(f"uses urllib (cross-platform, no external dependencies)")
+
+
 def main():
     parser = argparse.ArgumentParser(description="web application scanner")
-    parser.add_argument("url", help="target url")
+    parser.add_argument("url", nargs="?", default=None,
+                        help="target url (default: show usage)")
     parser.add_argument("-d", "--depth", type=int, default=3,
                         help="max crawl depth (default: 3)")
     parser.add_argument("--dirs-only", action="store_true",
@@ -274,6 +297,10 @@ def main():
                         help="request timeout")
     parser.add_argument("-o", "--output", help="save report to json file")
     args = parser.parse_args()
+
+    if args.url is None:
+        print_usage_demo()
+        sys.exit(0)
 
     spider = WebSpider(
         args.url, max_depth=args.depth,

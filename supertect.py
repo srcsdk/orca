@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import os
+import platform
 import re
 import sys
 import time
@@ -260,6 +261,34 @@ def print_report(report, as_json=False):
         print(f"           source={alert['source']} count={alert['count']}")
 
 
+def _detect_system_logs():
+    """find available system log files based on platform"""
+    os_name = platform.system()
+    candidates = []
+    if os_name == "Linux":
+        candidates = [
+            "/var/log/syslog", "/var/log/auth.log", "/var/log/messages",
+            "/var/log/secure", "/var/log/kern.log", "/var/log/daemon.log",
+        ]
+    elif os_name == "Darwin":
+        candidates = [
+            "/var/log/system.log", "/var/log/install.log",
+            "/var/log/wifi.log",
+        ]
+    elif os_name == "Windows":
+        # windows event logs require different tooling, check common text logs
+        appdata = os.environ.get("LOCALAPPDATA", "")
+        if appdata:
+            candidates = [
+                os.path.join(appdata, "Temp", "*.log"),
+            ]
+    found = []
+    for path in candidates:
+        if os.path.isfile(path) and os.access(path, os.R_OK):
+            found.append(path)
+    return found
+
+
 def main():
     parser = argparse.ArgumentParser(description="event correlation engine")
     parser.add_argument("-f", "--file", action="append", help="log file (repeatable)")
@@ -272,8 +301,14 @@ def main():
     args = parser.parse_args()
 
     if not args.file:
-        parser.print_help()
-        sys.exit(1)
+        args.file = _detect_system_logs()
+        if not args.file:
+            print("[supertect] no log files found to scan")
+            parser.print_help()
+            sys.exit(1)
+        print(f"[supertect] platform: {platform.system()} {platform.release()}")
+        print(f"[supertect] auto-detected {len(args.file)} log files")
+        print()
 
     rules = list(DEFAULT_RULES)
     if args.rules:

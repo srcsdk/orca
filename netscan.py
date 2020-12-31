@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import platform
 import socket
 import sys
 import time
@@ -146,17 +147,26 @@ def print_results(host, results):
     print(f"\n{len(results)} open ports on {host}")
 
 
+def get_default_threads():
+    """return sensible thread count based on platform"""
+    os_name = platform.system()
+    if os_name == "Windows":
+        return 50  # windows has lower fd limits
+    return 100
+
+
 def main():
     parser = argparse.ArgumentParser(description="tcp/udp port scanner")
-    parser.add_argument("host", help="target host or ip")
+    parser.add_argument("host", nargs="?", default=None,
+                        help="target host or ip (default: localhost)")
     parser.add_argument("start", nargs="?", type=int, default=1,
                         help="start port (default: 1)")
     parser.add_argument("end", nargs="?", type=int, default=1024,
                         help="end port (default: 1024)")
     parser.add_argument("-u", "--udp", action="store_true",
                         help="udp scan")
-    parser.add_argument("-t", "--threads", type=int, default=100,
-                        help="threads (default: 100)")
+    parser.add_argument("-t", "--threads", type=int, default=None,
+                        help="threads (default: auto)")
     parser.add_argument("-T", "--top", type=int, choices=[100, 1000],
                         help="scan top N ports")
     parser.add_argument("-b", "--banner", action="store_true",
@@ -169,6 +179,16 @@ def main():
                         help="slow host mode: higher timeouts and fewer threads")
 
     args = parser.parse_args()
+
+    # default to localhost with top 100 ports when no args given
+    if args.host is None:
+        args.host = "127.0.0.1"
+        if args.top is None:
+            args.top = 100
+        print(f"no target specified, scanning localhost top 100 ports")
+
+    if args.threads is None:
+        args.threads = get_default_threads()
 
     if args.slow:
         args.timeout = max(args.timeout, 3)

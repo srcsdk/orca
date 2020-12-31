@@ -2,16 +2,19 @@
 """system configuration and patch auditor"""
 
 import argparse
-import grp
 import json
 import os
-import pwd
+import platform
 import re
 import stat
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+
+
+def get_os():
+    return platform.system().lower()
 
 
 class AuditResult:
@@ -39,13 +42,19 @@ class ConfigAuditor:
 
     def __init__(self):
         self.results = []
+        self.os_type = get_os()
 
     def add(self, name, status, message, category="config"):
         self.results.append(AuditResult(name, status, message, category))
 
     def audit_sshd(self):
         """check sshd configuration against best practices"""
-        config_path = Path("/etc/ssh/sshd_config")
+        if self.os_type == "windows":
+            config_path = Path(os.environ.get("PROGRAMDATA", "C:\\ProgramData")) / \
+                "ssh" / "sshd_config"
+        else:
+            config_path = Path("/etc/ssh/sshd_config")
+
         if not config_path.exists():
             self.add("sshd_config", "skip", "file not found")
             return
@@ -103,15 +112,29 @@ class ConfigAuditor:
 
     def audit_file_permissions(self):
         """check critical file permissions"""
+        if self.os_type == "windows":
+            self._audit_windows_permissions()
+            return
+        if self.os_type == "darwin":
+            self._audit_unix_permissions(macos=True)
+            return
+        self._audit_unix_permissions(macos=False)
+
+    def _audit_unix_permissions(self, macos=False):
+        """check unix file permissions"""
         critical_files = {
             "/etc/passwd": {"max_mode": 0o644, "owner": "root"},
-            "/etc/shadow": {"max_mode": 0o640, "owner": "root"},
             "/etc/group": {"max_mode": 0o644, "owner": "root"},
-            "/etc/gshadow": {"max_mode": 0o640, "owner": "root"},
-            "/etc/ssh/sshd_config": {"max_mode": 0o600, "owner": "root"},
-            "/etc/crontab": {"max_mode": 0o644, "owner": "root"},
         }
+        if not macos:
+            critical_files.update({
+                "/etc/shadow": {"max_mode": 0o640, "owner": "root"},
+                "/etc/gshadow": {"max_mode": 0o640, "owner": "root"},
+                "/etc/ssh/sshd_config": {"max_mode": 0o600, "owner": "root"},
+                "/etc/crontab": {"max_mode": 0o644, "owner": "root"},
+            })
 
+        import pwd as _pwd
         for filepath, expected in critical_files.items():
             path = Path(filepath)
             if not path.exists():
@@ -119,7 +142,7 @@ class ConfigAuditor:
             try:
                 st = path.stat()
                 mode = stat.S_IMODE(st.st_mode)
-                owner = pwd.getpwuid(st.st_uid).pw_name
+                owner = _pwd.getpwuid(st.st_uid).pw_name
                 if mode > expected["max_mode"]:
                     self.add(
                         f"perms_{path.name}", "fail",
@@ -144,8 +167,33 @@ class ConfigAuditor:
                 self.add(f"perms_{path.name}", "skip",
                          f"cannot check {filepath}", "permissions")
 
-    def audit_world_writable(self, search_path="/etc"):
+    def _audit_windows_permissions(self):
+        """check windows system file access controls"""
+        sys_root = os.environ.get("SYSTEMROOT", "C:\\Windows")
+        critical = [
+            os.path.join(sys_root, "System32", "config"),
+            os.path.join(sys_root, "System32", "drivers", "etc", "hosts"),
+        ]
+        for filepath in critical:
+            if os.path.exists(filepath):
+                self.add(f"perms_{os.path.basename(filepath)}", "info",
+                         f"{filepath} exists (use icacls to verify acls)",
+                         "permissions")
+            else:
+                self.add(f"perms_{os.path.basename(filepath)}", "skip",
+                         f"{filepath} not found", "permissions")
+
+    def audit_world_writable(self, search_path=None):
         """find world-writable files"""
+        if self.os_type == "windows":
+            self.add("world_writable", "skip",
+                     "world-writable check not applicable on windows",
+                     "permissions")
+            return
+
+        if search_path is None:
+            search_path = "/etc"
+
         writable = []
         try:
             for root, dirs, files in os.walk(search_path):
@@ -172,6 +220,11 @@ class ConfigAuditor:
 
     def audit_suid_binaries(self):
         """check for unexpected suid binaries"""
+        if self.os_type == "windows":
+            self.add("suid_check", "skip",
+                     "suid check not applicable on windows", "permissions")
+            return
+
         known_suid = {
             "/usr/bin/passwd", "/usr/bin/sudo", "/usr/bin/su",
             "/usr/bin/newgrp", "/usr/bin/chsh", "/usr/bin/chfn",
@@ -179,7 +232,11 @@ class ConfigAuditor:
             "/usr/bin/pkexec", "/usr/bin/crontab",
         }
         found_suid = []
-        for search_dir in ["/usr/bin", "/usr/sbin", "/usr/local/bin"]:
+        search_dirs = ["/usr/bin", "/usr/sbin", "/usr/local/bin"]
+        if self.os_type == "darwin":
+            search_dirs.append("/usr/local/sbin")
+
+        for search_dir in search_dirs:
             if not os.path.isdir(search_dir):
                 continue
             try:
@@ -210,17 +267,22 @@ class PackageAuditor:
 
     def __init__(self):
         self.results = []
+        self.os_type = get_os()
 
     def add(self, name, status, message):
         self.results.append(AuditResult(name, status, message, "packages"))
 
     def check_updates(self):
         """check for available package updates"""
+        if self.os_type == "windows":
+            return self._check_winget()
+        if self.os_type == "darwin":
+            return self._check_brew()
         if os.path.exists("/usr/bin/apt"):
             return self._check_apt()
-        elif os.path.exists("/usr/bin/dnf"):
+        if os.path.exists("/usr/bin/dnf"):
             return self._check_dnf()
-        elif os.path.exists("/usr/bin/pacman"):
+        if os.path.exists("/usr/bin/pacman"):
             return self._check_pacman()
         self.add("pkg_manager", "skip", "no supported package manager found")
 
@@ -273,6 +335,46 @@ class PackageAuditor:
         except (subprocess.TimeoutExpired, FileNotFoundError):
             self.add("pacman_updates", "skip", "could not check pacman")
 
+    def _check_brew(self):
+        """check homebrew for outdated packages"""
+        try:
+            result = subprocess.run(
+                ["brew", "outdated"],
+                capture_output=True, text=True, timeout=60
+            )
+            lines = [l for l in result.stdout.strip().split("\n") if l.strip()]
+            if lines:
+                self.add("brew_updates", "warn",
+                         f"{len(lines)} brew packages have updates")
+                for line in lines[:10]:
+                    self.add(f"brew_update_{line.split()[0]}", "info",
+                             line.strip())
+            else:
+                self.add("brew_updates", "pass", "all brew packages up to date")
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            self.add("brew_updates", "skip", "homebrew not available")
+
+    def _check_winget(self):
+        """check winget for available updates"""
+        try:
+            result = subprocess.run(
+                ["winget", "upgrade"],
+                capture_output=True, text=True, timeout=60
+            )
+            lines = result.stdout.strip().split("\n")
+            upgrade_lines = [l for l in lines
+                             if l.strip() and not l.startswith("-")
+                             and not l.startswith("Name")]
+            count = max(0, len(upgrade_lines) - 1)
+            if count > 0:
+                self.add("winget_updates", "warn",
+                         f"{count} packages have updates via winget")
+            else:
+                self.add("winget_updates", "pass",
+                         "all winget packages up to date")
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            self.add("winget_updates", "skip", "winget not available")
+
 
 def generate_report(config_results, package_results, output_format="text"):
     """generate audit report"""
@@ -280,6 +382,7 @@ def generate_report(config_results, package_results, output_format="text"):
     if output_format == "json":
         return json.dumps({
             "audit_date": datetime.now().isoformat(),
+            "platform": platform.system(),
             "total_checks": len(all_results),
             "passed": sum(1 for r in all_results if r.status == "pass"),
             "failed": sum(1 for r in all_results if r.status == "fail"),
@@ -287,7 +390,11 @@ def generate_report(config_results, package_results, output_format="text"):
             "results": [r.to_dict() for r in all_results],
         }, indent=2)
 
-    lines = [f"audit report - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ""]
+    lines = [
+        f"audit report - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} "
+        f"({platform.system()})",
+        "",
+    ]
     status_map = {"pass": "PASS", "fail": "FAIL", "warn": "WARN",
                   "info": "INFO", "skip": "SKIP"}
     current_cat = ""

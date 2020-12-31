@@ -5,6 +5,7 @@ import argparse
 import json
 import logging
 import os
+import platform
 import re
 import sys
 import time
@@ -12,6 +13,8 @@ from collections import defaultdict
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import unquote, parse_qs, urlparse
+
+PLATFORM = platform.system().lower()
 
 
 class WafRule:
@@ -208,6 +211,47 @@ def analyze_log_file(log_path, analyzer):
                 print(f"[{sev}] {src_ip} {method} {uri} -> {rules}")
 
 
+def run_self_test(analyzer):
+    """run waf self-test with common attack payloads"""
+    print(f"web application firewall - self-test")
+    print(f"platform: {PLATFORM}")
+    print(f"loaded {len(analyzer.engine.rules)} rules\n")
+
+    test_payloads = [
+        ("GET", "/search?q=normal+query", "benign request"),
+        ("GET", "/page?id=1' OR '1'='1", "sql injection (or bypass)"),
+        ("GET", "/api?q=<script>alert(1)</script>", "xss (script tag)"),
+        ("GET", "/file?path=../../../etc/passwd", "path traversal"),
+        ("GET", "/cmd?exec=;cat /etc/shadow", "command injection"),
+        ("GET", "/api?id=1 UNION SELECT * FROM users", "sql injection (union)"),
+        ("GET", "/page?cb=javascript:alert(1)", "xss (javascript uri)"),
+        ("GET", "/download?f=%2e%2e%2fetc/shadow", "encoded traversal"),
+        ("POST", "/login", "benign post"),
+        ("GET", "/api?q=benchmark(10000000,sha1('test'))", "sqli (benchmark)"),
+    ]
+
+    print(f"{'result':<10} {'payload':<45} {'description'}")
+    print("-" * 85)
+
+    for method, uri, desc in test_payloads:
+        allowed, entry = analyzer.analyze_request(method, uri, {}, src_ip="test")
+        status = "allowed" if allowed else "blocked"
+        rules = ""
+        if entry:
+            rules = ", ".join(r["name"] for r in entry["rules_matched"][:3])
+        display_uri = uri[:43] + ".." if len(uri) > 45 else uri
+        print(f"{status:<10} {display_uri:<45} {desc}")
+        if rules:
+            print(f"{'':>10} rules: {rules}")
+
+    print()
+    stats = analyzer.stats()
+    print(f"allowed: {stats['total_allowed']}")
+    print(f"blocked: {stats['total_blocked']}")
+    for cat, count in sorted(stats["categories"].items()):
+        print(f"  {cat}: {count}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="web application firewall")
     parser.add_argument("-l", "--log", help="analyze access log file")
@@ -258,7 +302,7 @@ def main():
             print(f"\nsaved to {args.output}")
         return
 
-    parser.print_help()
+    run_self_test(analyzer)
 
 
 if __name__ == "__main__":

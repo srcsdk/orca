@@ -4,20 +4,24 @@
 import argparse
 import ipaddress
 import json
+import platform
 import socket
 import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+PLATFORM = platform.system().lower()
+
 
 def ping_host(ip, timeout=1):
     """check if host responds to icmp echo"""
     try:
-        result = subprocess.run(
-            ["ping", "-c", "1", "-W", str(timeout), str(ip)],
-            capture_output=True, timeout=timeout + 1
-        )
+        if PLATFORM == "windows":
+            cmd = ["ping", "-n", "1", "-w", str(int(timeout * 1000)), str(ip)]
+        else:
+            cmd = ["ping", "-c", "1", "-W", str(timeout), str(ip)]
+        result = subprocess.run(cmd, capture_output=True, timeout=timeout + 2)
         return result.returncode == 0
     except (subprocess.TimeoutExpired, OSError):
         return False
@@ -26,18 +30,30 @@ def ping_host(ip, timeout=1):
 def get_mac(ip):
     """get mac address from arp table"""
     try:
-        result = subprocess.run(
-            ["arp", "-n", str(ip)],
-            capture_output=True, text=True, timeout=5
-        )
+        if PLATFORM == "windows":
+            cmd = ["arp", "-a", str(ip)]
+        elif PLATFORM == "darwin":
+            cmd = ["arp", "-n", str(ip)]
+        else:
+            cmd = ["arp", "-n", str(ip)]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
         for line in result.stdout.split("\n"):
             if str(ip) in line:
                 parts = line.split()
-                if len(parts) >= 3 and ":" in parts[2]:
-                    return parts[2]
+                for part in parts:
+                    if _is_mac(part):
+                        return part.replace("-", ":")
     except (subprocess.TimeoutExpired, OSError):
         pass
     return None
+
+
+def _is_mac(s):
+    """check if string looks like a mac address"""
+    s = s.replace("-", ":").lower()
+    if len(s) != 17:
+        return False
+    return all(c in "0123456789abcdef:" for c in s)
 
 
 def resolve_hostname(ip):
@@ -140,17 +156,7 @@ def main():
     args = parser.parse_args()
 
     if not args.target:
-        try:
-            result = subprocess.run(
-                ["ip", "route"],
-                capture_output=True, text=True, timeout=5
-            )
-            for line in result.stdout.split("\n"):
-                if "default" not in line and "/" in line:
-                    args.target = line.split()[0]
-                    break
-        except (subprocess.TimeoutExpired, OSError):
-            pass
+        args.target = _detect_local_subnet()
 
     if not args.target:
         print("could not determine target network", file=sys.stderr)
@@ -188,6 +194,68 @@ def main():
         print(f"saved to {args.output}")
 
 
+def _detect_local_subnet():
+    """auto-detect local subnet from system network config"""
+    # try ip route (linux)
+    if PLATFORM == "linux":
+        try:
+            result = subprocess.run(
+                ["ip", "route"], capture_output=True, text=True, timeout=5
+            )
+            for line in result.stdout.split("\n"):
+                if "default" not in line and "/" in line:
+                    return line.split()[0]
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+
+    # try netstat -rn (macos/bsd)
+    if PLATFORM == "darwin":
+        try:
+            result = subprocess.run(
+                ["netstat", "-rn"], capture_output=True, text=True, timeout=5
+            )
+            for line in result.stdout.split("\n"):
+                if "default" in line or "0.0.0.0" in line:
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        gw = parts[1]
+                        if "." in gw and not gw.startswith("0."):
+                            prefix = ".".join(gw.split(".")[:3])
+                            return f"{prefix}.0/24"
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+
+    # try ipconfig (windows)
+    if PLATFORM == "windows":
+        try:
+            result = subprocess.run(
+                ["ipconfig"], capture_output=True, text=True, timeout=5
+            )
+            import re
+            ips = re.findall(
+                r"IPv4.*?:\s*(\d+\.\d+\.\d+\.\d+)", result.stdout
+            )
+            for ip in ips:
+                if not ip.startswith("127."):
+                    prefix = ".".join(ip.split(".")[:3])
+                    return f"{prefix}.0/24"
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+
+    # fallback: use socket to get local ip
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 53))
+        local_ip = s.getsockname()[0]
+        s.close()
+        prefix = ".".join(local_ip.split(".")[:3])
+        return f"{prefix}.0/24"
+    except OSError:
+        pass
+
+    return None
+
+
 if __name__ == "__main__":
     main()
 
@@ -202,9 +270,12 @@ def guess_os_from_ttl(ip, timeout=1):
       solaris: 254
     """
     try:
+        if PLATFORM == "windows":
+            cmd = ["ping", "-n", "1", "-w", str(int(timeout * 1000)), str(ip)]
+        else:
+            cmd = ["ping", "-c", "1", "-W", str(timeout), str(ip)]
         result = subprocess.run(
-            ["ping", "-c", "1", "-W", str(timeout), str(ip)],
-            capture_output=True, text=True, timeout=timeout + 2
+            cmd, capture_output=True, text=True, timeout=timeout + 2
         )
         if result.returncode != 0:
             return None
