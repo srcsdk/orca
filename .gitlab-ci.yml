@@ -1,0 +1,29 @@
+image: python:3.11
+
+stages:
+  - lint
+  - test
+
+cache:
+  paths:
+    - .cache/pip
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+
+lint:
+  stage: lint
+  script:
+    - pip install flake8
+    - flake8 --max-line-length=120 *.py
+
+compile:
+  stage: test
+  script:
+    - pip install -r requirements.txt
+    - |
+      for f in *.py; do
+        echo "compiling $f"
+        python -m py_compile "$f"
+      done
+    - python discovery.py --help
