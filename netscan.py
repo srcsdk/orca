@@ -30,7 +30,7 @@ def get_service(port, proto="tcp"):
         return None
 
 
-def check_tcp(host, port, timeout=1):
+def check_tcp(host, port, timeout=2):
     """check if a tcp port is open"""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
