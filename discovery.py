@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""network host discovery - arp and ping sweep"""
+"""network host discovery v1.1 - arp and ping sweep"""
 
 import argparse
 import ipaddress
