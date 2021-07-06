@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+__version__ = "1.1.0"
 """network scan detection and alerting"""
 
 import argparse
