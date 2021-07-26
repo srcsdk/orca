@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name="orcasec",
-    version="0.1.0",
+    version="1.1.0",
     author="srcsdk",
     author_email="srcsdk@users.noreply.github.com",
     description="modular security toolkit for network analysis and defense",
