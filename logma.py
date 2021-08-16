@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+__version__ = "1.1.0"
 """centralized log collection and normalization engine"""
 
 import argparse
