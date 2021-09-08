@@ -275,3 +275,17 @@ def list_presets():
         if len(ports) > 10:
             port_str += f" ... ({len(ports)} total)"
         print(f"  {name:<10} {port_str}")
+
+
+def validate_target(target):
+    """validate and resolve target to ip address"""
+    import ipaddress
+    try:
+        ipaddress.ip_address(target)
+        return target
+    except ValueError:
+        pass
+    try:
+        return socket.gethostbyname(target)
+    except socket.gaierror:
+        return None
