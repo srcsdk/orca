@@ -212,3 +212,16 @@ if __name__ == "__main__":
             sev = r["severity"].upper()
             print(f"  [{sev}] {r['cve']} (CVSS {r['score']})")
             print(f"    {r['description'][:80]}")
+
+
+def _api_request_with_retry(params, max_retries=3, delay=RATE_LIMIT):
+    """make nvd api request with retry on failure"""
+    for attempt in range(max_retries):
+        result = _api_request(params)
+        if result is not None:
+            return result
+        if attempt < max_retries - 1:
+            wait = delay * (attempt + 1)
+            print(f"[nvd] retry {attempt + 1}/{max_retries} in {wait}s...")
+            time.sleep(wait)
+    return None
