@@ -144,3 +144,19 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def calculate_subnet(ip, prefix=24):
+    """calculate network address and broadcast for a given ip and prefix"""
+    import ipaddress
+    try:
+        network = ipaddress.ip_network(f"{ip}/{prefix}", strict=False)
+        return {
+            "network": str(network.network_address),
+            "broadcast": str(network.broadcast_address),
+            "netmask": str(network.netmask),
+            "hosts": network.num_addresses - 2,
+            "cidr": str(network),
+        }
+    except ValueError:
+        return None
