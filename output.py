@@ -202,3 +202,21 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def summary_report(scan_result, include_hosts=True, include_vulns=True):
+    """generate a text summary of scan results"""
+    lines = []
+    lines.append(f"scan target: {scan_result.target}")
+    lines.append(f"duration: {scan_result.end_time - scan_result.start_time:.1f}s")
+    lines.append(f"hosts found: {len(scan_result.hosts)}")
+    lines.append(f"vulnerabilities: {len(scan_result.vulnerabilities)}")
+    if include_hosts and scan_result.hosts:
+        lines.append("\nhosts:")
+        for h in scan_result.hosts:
+            lines.append(f"  {h.ip} ({h.hostname or 'unknown'})")
+    if include_vulns and scan_result.vulnerabilities:
+        lines.append("\nvulnerabilities:")
+        for v in scan_result.vulnerabilities:
+            lines.append(f"  [{v.severity}] {v.cve_id}: {v.description[:60]}")
+    return "\n".join(lines)
