@@ -289,3 +289,16 @@ def validate_target(target):
         return socket.gethostbyname(target)
     except socket.gaierror:
         return None
+
+
+def parse_port_range(port_str):
+    """parse port specification like '80,443,8000-8100' into list"""
+    ports = []
+    for part in port_str.split(","):
+        part = part.strip()
+        if "-" in part:
+            start, end = part.split("-", 1)
+            ports.extend(range(int(start), int(end) + 1))
+        else:
+            ports.append(int(part))
+    return sorted(set(p for p in ports if 0 < p < 65536))
