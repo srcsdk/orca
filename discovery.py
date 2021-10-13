@@ -302,3 +302,13 @@ def classify_ttl(ttl):
         return {"ttl": ttl, "os_hint": "solaris/aix", "confidence": "low"}
     else:
         return {"ttl": ttl, "os_hint": "cisco/network", "confidence": "low"}
+
+
+def expand_cidr(cidr):
+    """expand cidr notation to list of host addresses"""
+    import ipaddress
+    try:
+        network = ipaddress.ip_network(cidr, strict=False)
+        return [str(ip) for ip in network.hosts()]
+    except ValueError:
+        return []
