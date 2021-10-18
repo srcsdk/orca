@@ -226,3 +226,20 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+class RateLimiter:
+    """simple rate limiter for pipeline stages"""
+
+    def __init__(self, max_per_second=10):
+        self.interval = 1.0 / max_per_second
+        self.last_call = 0
+
+    def wait(self):
+        """wait if needed to maintain rate limit"""
+        import time
+        now = time.time()
+        elapsed = now - self.last_call
+        if elapsed < self.interval:
+            time.sleep(self.interval - elapsed)
+        self.last_call = time.time()
