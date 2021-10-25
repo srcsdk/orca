@@ -206,3 +206,15 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def severity_summary(vulnerabilities):
+    """count vulnerabilities by severity level"""
+    counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+    for v in vulnerabilities:
+        sev = v.severity.lower() if hasattr(v, 'severity') else v.get("severity", "info").lower()
+        if sev in counts:
+            counts[sev] += 1
+        else:
+            counts["info"] += 1
+    return counts
