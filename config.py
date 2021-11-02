@@ -160,3 +160,17 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def load_profile(profile_name):
+    """load a named scan profile from config"""
+    config = load_config()
+    profiles = config.get("profiles", {})
+    if profile_name in profiles:
+        return profiles[profile_name]
+    builtin = {
+        "quick": {"timeout": 1, "threads": 50, "top_ports": 100},
+        "thorough": {"timeout": 3, "threads": 20, "top_ports": 1000},
+        "stealth": {"timeout": 5, "threads": 5, "top_ports": 100},
+    }
+    return builtin.get(profile_name, builtin["quick"])
