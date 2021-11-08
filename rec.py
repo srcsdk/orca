@@ -291,3 +291,24 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+SERVICE_SIGNATURES = {
+    b"SSH-": "ssh",
+    b"220 ": "ftp/smtp",
+    b"HTTP/": "http",
+    b"+OK": "pop3",
+    b"* OK": "imap",
+    b"MySQL": "mysql",
+    b"PostgreSQL": "postgresql",
+}
+
+
+def identify_service(banner):
+    """identify service from banner using known signatures"""
+    if not banner:
+        return "unknown"
+    for sig, name in SERVICE_SIGNATURES.items():
+        if banner.startswith(sig):
+            return name
+    return "unknown"
