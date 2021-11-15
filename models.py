@@ -218,3 +218,15 @@ def severity_summary(vulnerabilities):
         else:
             counts["info"] += 1
     return counts
+
+
+def deduplicate_alerts(alerts):
+    """remove duplicate alerts based on source and message"""
+    seen = set()
+    unique = []
+    for alert in alerts:
+        key = (alert.source, alert.message) if hasattr(alert, 'source') else (alert.get("source"), alert.get("message"))
+        if key not in seen:
+            seen.add(key)
+            unique.append(alert)
+    return unique
