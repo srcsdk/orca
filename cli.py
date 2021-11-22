@@ -274,3 +274,13 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main() or 0)
+
+
+EXAMPLES = """
+examples:
+  python cli.py list
+  python cli.py run discovery --target 192.168.1.0/24
+  python cli.py scan 192.168.1.1
+  python cli.py pipeline discover,scan --target 10.0.0.0/24
+  python cli.py config --show
+"""
