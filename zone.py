@@ -462,3 +462,21 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def export_dns_csv(records, filename):
+    """export dns records to csv file"""
+    import csv
+    if not records:
+        return
+    with open(filename, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["type", "name", "value", "ttl"])
+        for rec in records:
+            writer.writerow([
+                rec.get("type", ""),
+                rec.get("name", ""),
+                rec.get("value", ""),
+                rec.get("ttl", ""),
+            ])
+    print(f"exported {len(records)} records to {filename}")
