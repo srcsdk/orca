@@ -160,3 +160,37 @@ def calculate_subnet(ip, prefix=24):
         }
     except ValueError:
         return None
+
+
+class ConnectionPool:
+    """simple connection pool for reusing tcp connections"""
+
+    def __init__(self, max_size=20):
+        self.max_size = max_size
+        self.pool = {}
+
+    def get(self, host, port, timeout=5):
+        """get or create a connection"""
+        key = (host, port)
+        if key in self.pool:
+            sock = self.pool[key]
+            try:
+                sock.getpeername()
+                return sock
+            except OSError:
+                del self.pool[key]
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        sock.connect((host, port))
+        if len(self.pool) < self.max_size:
+            self.pool[key] = sock
+        return sock
+
+    def close_all(self):
+        """close all pooled connections"""
+        for sock in self.pool.values():
+            try:
+                sock.close()
+            except OSError:
+                pass
+        self.pool.clear()
