@@ -24,11 +24,10 @@ def parse_cert(cert, hostname):
     not_before = cert.get("notBefore", "")
     try:
         expiry = datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z")
-        issued = datetime.strptime(not_before, "%b %d %H:%M:%S %Y %Z")
+        datetime.strptime(not_before, "%b %d %H:%M:%S %Y %Z")
         days_left = (expiry - datetime.utcnow()).days
     except ValueError:
         expiry = None
-        issued = None
         days_left = -1
     subject = dict(x[0] for x in cert.get("subject", ()))
     issuer = dict(x[0] for x in cert.get("issuer", ()))

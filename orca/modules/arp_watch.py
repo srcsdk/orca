@@ -2,7 +2,6 @@
 """arp spoofing detector with mac validation"""
 
 import subprocess
-import re
 import time
 from collections import defaultdict
 

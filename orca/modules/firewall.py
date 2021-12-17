@@ -2,7 +2,6 @@
 """firewall rule generator for detected vulnerabilities"""
 
 import subprocess
-import platform
 
 
 def generate_iptables_rule(action, protocol="tcp", port=None,

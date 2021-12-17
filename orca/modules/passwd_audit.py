@@ -3,7 +3,6 @@
 
 import math
 import hashlib
-import os
 
 COMMON_PASSWORDS = {
     "password", "123456", "12345678", "qwerty", "abc123",

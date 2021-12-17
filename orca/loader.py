@@ -3,7 +3,6 @@
 
 import importlib
 import os
-import sys
 
 
 def discover_modules(base_dir=None):

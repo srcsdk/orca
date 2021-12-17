@@ -4,7 +4,6 @@
 import json
 import os
 import time
-import threading
 
 
 SCHEDULE_FILE = os.path.join(

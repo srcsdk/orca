@@ -2,7 +2,6 @@
 """system hardening checklist with auto-fix options"""
 
 import os
-import subprocess
 
 
 CHECKS = [
