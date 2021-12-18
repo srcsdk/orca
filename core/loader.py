@@ -2,6 +2,7 @@
 """unified module loader for dynamic script discovery"""
 
 import importlib
+import importlib.util
 import os
 
 

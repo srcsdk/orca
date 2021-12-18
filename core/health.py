@@ -2,7 +2,7 @@
 """module health check with status reporting"""
 
 import time
-from orca.loader import discover_modules, load_module, module_info
+from core.loader import discover_modules, load_module, module_info
 
 
 def check_module(name, base_dir=None):

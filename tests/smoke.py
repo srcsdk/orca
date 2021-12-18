@@ -12,7 +12,7 @@ def run_smoke_tests(base_dir=None):
     """run smoke tests: import each module and check basics."""
     if base_dir is None:
         base_dir = os.path.dirname(os.path.dirname(__file__))
-    from orca.loader import discover_modules, load_module
+    from core.loader import discover_modules, load_module
     modules = discover_modules(base_dir)
     results = {"passed": 0, "failed": 0, "errors": []}
     for name in modules:

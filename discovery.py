@@ -256,6 +256,32 @@ def _detect_local_subnet():
     return None
 
 
+def passive_recon(domain):
+    """gather info from DNS records without active scanning.
+
+    queries common record types to build a profile of the domain.
+    returns dict with resolved records.
+    """
+    records = {"domain": domain, "a": [], "mx": [], "ns": [], "txt": []}
+    try:
+        addrs = socket.getaddrinfo(domain, None, socket.AF_INET)
+        records["a"] = list(set(addr[4][0] for addr in addrs))
+    except socket.gaierror:
+        pass
+    for qtype in ["mx", "ns", "txt"]:
+        try:
+            result = subprocess.run(
+                ["dig", "+short", qtype, domain],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                lines = [ln.strip() for ln in result.stdout.strip().split("\n") if ln.strip()]
+                records[qtype] = lines
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+    return records
+
+
 if __name__ == "__main__":
     main()
 
@@ -312,3 +338,34 @@ def expand_cidr(cidr):
         return [str(ip) for ip in network.hosts()]
     except ValueError:
         return []
+
+
+def rate_limited_scan(target, threads=50, timeout=1, delay=0.5):
+    """discover hosts with a configurable delay between requests.
+
+    wraps the standard discover() scan with rate limiting to avoid
+    triggering ids/ips or overwhelming the target network.
+
+    args:
+        target: cidr network to scan
+        threads: number of threads (kept low for rate limiting)
+        timeout: ping timeout per host
+        delay: seconds to wait between each host scan
+    """
+    try:
+        network = ipaddress.ip_network(target, strict=False)
+    except ValueError as e:
+        print(f"invalid target: {e}", file=sys.stderr)
+        return []
+
+    hosts = list(network.hosts())
+    results = []
+
+    for ip in hosts:
+        result = scan_host(ip, timeout)
+        if result:
+            results.append(result)
+        time.sleep(delay)
+
+    results.sort(key=lambda h: ipaddress.ip_address(h["ip"]))
+    return results

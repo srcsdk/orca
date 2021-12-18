@@ -15,15 +15,18 @@ lint:
   stage: lint
   script:
     - pip install flake8
-    - flake8 --max-line-length=120 --ignore=E127,E128,E131,W503,W504,E226 *.py
+    - flake8 --max-line-length=120 --ignore=E127,E128,E131,W503,W504,E226 .
 
 compile:
   stage: test
   script:
     - pip install -r requirements.txt
-    - |
-      for f in *.py; do
-        echo "compiling $f"
-        python -m py_compile "$f"
-      done
+    - find . -name "*.py" -not -path "./.cache/*" -exec python -m py_compile {} \;
     - python discovery.py --help
+
+smoke:
+  stage: test
+  script:
+    - pip install -r requirements.txt
+    - python tests/smoke.py
+  allow_failure: true
