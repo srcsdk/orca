@@ -29,4 +29,3 @@ smoke:
   script:
     - pip install -r requirements.txt
     - python tests/smoke.py
-  allow_failure: true
