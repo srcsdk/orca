@@ -409,7 +409,7 @@ def main():
             pass
 
     stats = monitor.stats()
-    print(f"\n--- dns monitor summary ---")
+    print("\n--- dns monitor summary ---")
     print(f"queries analyzed: {stats['total_queries']}")
     print(f"unique domains:   {stats['unique_domains']}")
     print(f"alerts raised:    {stats['total_alerts']}")

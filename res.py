@@ -9,8 +9,6 @@ import re
 import shutil
 import signal
 import subprocess
-import sys
-import time
 from datetime import datetime
 from pathlib import Path
 
@@ -245,7 +243,7 @@ class IncidentResponse:
 
     def _find_suspicious_processes(self):
         """find potentially suspicious processes"""
-        suspicious = []
+        []
         suspicious_names = {
             "nc", "ncat", "netcat", "socat", "meterpreter",
             "mimikatz", "pwdump", "procdump",

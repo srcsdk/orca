@@ -6,9 +6,7 @@ import json
 import platform
 import socket
 import ssl
-import sys
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 # weak ciphers to flag
@@ -41,7 +39,7 @@ def test_tls_version(host, port, version_name, version_const, timeout=5):
         sock.settimeout(timeout)
         wrapped = ctx.wrap_socket(sock, server_hostname=host)
         wrapped.connect((host, port))
-        actual = wrapped.version()
+        wrapped.version()
         wrapped.close()
         return True
     except (ssl.SSLError, socket.timeout, ConnectionRefusedError, OSError):
@@ -132,7 +130,7 @@ def get_supported_ciphers(host, port, timeout=5):
             sock.settimeout(timeout)
             wrapped = test_ctx.wrap_socket(sock, server_hostname=host)
             wrapped.connect((host, port))
-            negotiated = wrapped.cipher()
+            wrapped.cipher()
             wrapped.close()
 
             is_weak = any(w in name for w in WEAK_CIPHERS)
@@ -236,7 +234,7 @@ def print_results(result):
 
     cert = result["certificate"]
     if cert and "error" not in cert:
-        print(f"\ncertificate:")
+        print("\ncertificate:")
         if cert.get("subject"):
             cn = cert["subject"].get("commonName", "n/a")
             print(f"  common name: {cn}")
@@ -252,7 +250,7 @@ def print_results(result):
         print(f"  protocol:    {cert.get('protocol', 'n/a')}")
         print(f"  cipher:      {cert.get('cipher', 'n/a')}")
 
-    print(f"\nprotocol support:")
+    print("\nprotocol support:")
     for name, supported in result["supported_versions"].items():
         status = "yes" if supported else "no"
         print(f"  {name}: {status}")
@@ -269,7 +267,7 @@ def print_results(result):
             sev = issue["severity"].upper()
             print(f"  [{sev}] {issue['issue']}")
     else:
-        print(f"\nno issues found")
+        print("\nno issues found")
 
 
 def main():
@@ -382,6 +380,6 @@ def print_chain_result(result):
     if result.get("leaf_issuer"):
         print(f"  issuer:  {result['leaf_issuer']}")
     if result.get("self_signed"):
-        print(f"  warning: self-signed certificate")
+        print("  warning: self-signed certificate")
     if result.get("error"):
         print(f"  error:   {result['error']}")

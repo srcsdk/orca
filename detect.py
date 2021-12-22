@@ -327,7 +327,7 @@ def main():
     except KeyboardInterrupt:
         pass
 
-    print(f"\n--- detection summary ---")
+    print("\n--- detection summary ---")
     stats = detector.stats()
     print(f"sources tracked: {stats['total_sources']}")
     print(f"alerts raised:   {stats['total_alerts']}")

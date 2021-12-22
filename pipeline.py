@@ -9,8 +9,6 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
-from models import ScanResult
-
 
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 

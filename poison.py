@@ -83,7 +83,7 @@ def build_arp_packet(src_mac, src_ip, dst_mac, dst_ip, op=2):
     arp_header = struct.pack(
         "!HHBBH",
         1,      # hardware type: ethernet
-        0x0800, # protocol type: ipv4
+        0x0800,  # protocol type: ipv4
         6,      # hardware size
         4,      # protocol size
         op      # operation: 2=reply
@@ -324,7 +324,7 @@ def main():
     iface = args.interface or _default_interface()
 
     if PLATFORM != "linux":
-        print(f"warning: raw arp spoofing requires AF_PACKET (linux only)",
+        print("warning: raw arp spoofing requires AF_PACKET (linux only)",
               file=sys.stderr)
         print("on other platforms, consider using a tool like ettercap",
               file=sys.stderr)

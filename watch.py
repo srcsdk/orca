@@ -9,7 +9,6 @@ import os
 import platform
 import signal
 import socket
-import struct
 import subprocess
 import sys
 import time

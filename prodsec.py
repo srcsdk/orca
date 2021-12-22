@@ -288,9 +288,9 @@ class CisBenchmark:
                     ["iptables", "-L"],
                     capture_output=True, text=True, timeout=5,
                 )
-                rules = len([l for l in result.stdout.splitlines()
-                             if l and not l.startswith("Chain")
-                             and not l.startswith("target")])
+                rules = len([ln for ln in result.stdout.splitlines()
+                             if ln and not ln.startswith("Chain")
+                             and not ln.startswith("target")])
                 if rules > 0:
                     self.add_check("pass", "3.5.1", f"iptables has {rules} rules")
                     firewall_active = True
@@ -336,8 +336,8 @@ class CisBenchmark:
 
         passwd = Path("/etc/passwd")
         if passwd.exists():
-            uid0 = [l.split(":")[0] for l in passwd.read_text().splitlines()
-                     if l.split(":")[2] == "0" if len(l.split(":")) > 2]
+            uid0 = [ln.split(":")[0] for ln in passwd.read_text().splitlines()
+                     if ln.split(":")[2] == "0" if len(ln.split(":")) > 2]
             if len(uid0) == 1:
                 self.add_check("pass", "6.2.5", "only root has uid 0")
             else:
@@ -348,8 +348,8 @@ class CisBenchmark:
         if shadow.exists():
             try:
                 content = shadow.read_text()
-                empty_pw = [l.split(":")[0] for l in content.splitlines()
-                            if len(l.split(":")) > 1 and l.split(":")[1] == ""]
+                empty_pw = [ln.split(":")[0] for ln in content.splitlines()
+                            if len(ln.split(":")) > 1 and ln.split(":")[1] == ""]
                 if not empty_pw:
                     self.add_check("pass", "6.2.1", "no accounts with empty passwords")
                 else:
@@ -401,8 +401,8 @@ class CisBenchmark:
             try:
                 content = sudoers.read_text()
                 if "NOPASSWD" in content:
-                    nopasswd_lines = [l.strip() for l in content.splitlines()
-                                       if "NOPASSWD" in l and not l.strip().startswith("#")]
+                    nopasswd_lines = [ln.strip() for ln in content.splitlines()
+                                       if "NOPASSWD" in ln and not ln.strip().startswith("#")]
                     if nopasswd_lines:
                         self.add_check("warn", "priv.1",
                                        f"{len(nopasswd_lines)} NOPASSWD sudo rules",
@@ -471,7 +471,7 @@ class CisBenchmark:
                 ["docker", "ps", "--format", "{{.Names}}\t{{.Image}}\t{{.Status}}"],
                 capture_output=True, text=True, timeout=10,
             )
-            containers = [l for l in result.stdout.strip().split("\n") if l.strip()]
+            containers = [ln for ln in result.stdout.strip().split("\n") if ln.strip()]
             self.add_check("info", "docker.3",
                            f"{len(containers)} running containers")
         except (FileNotFoundError, subprocess.TimeoutExpired):

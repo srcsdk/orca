@@ -328,7 +328,7 @@ def print_report(report, as_json=False):
         print(json.dumps(report, indent=2))
         return
 
-    print(f"\n[containok] scan results")
+    print("\n[containok] scan results")
     print(f"total findings: {report['total_findings']}")
     print(f"severity: {report['severity_counts']}")
     print()
@@ -341,7 +341,7 @@ def print_report(report, as_json=False):
 
 def show_docker_info():
     """show docker environment info as default action"""
-    print(f"container security scanner")
+    print("container security scanner")
     print(f"platform: {PLATFORM}\n")
 
     try:
@@ -368,7 +368,7 @@ def show_docker_info():
              "table {{.ID}}\t{{.Image}}\t{{.Status}}\t{{.Names}}"],
             capture_output=True, text=True, timeout=10
         )
-        print(f"\nrunning containers:")
+        print("\nrunning containers:")
         print(result.stdout.strip() or "  (none)")
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
@@ -380,7 +380,7 @@ def show_docker_info():
              "table {{.Repository}}\t{{.Tag}}\t{{.Size}}"],
             capture_output=True, text=True, timeout=10
         )
-        print(f"\nimages:")
+        print("\nimages:")
         print(result.stdout.strip() or "  (none)")
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass

@@ -5,7 +5,6 @@ import csv
 import io
 import json
 import os
-import sys
 import time
 
 from models import ScanResult, Host, Port, Vulnerability, Alert
@@ -145,8 +144,8 @@ def html_report(result, file=None, title="orcasec scan report"):
         for h in hosts:
             ports = h.get("ports", [])
             port_str = ", ".join(str(p.get("number", p) if isinstance(p, dict) else p) for p in ports)
-            html.append(f"<tr><td>{h.get('ip','')}</td><td>{h.get('hostname','')}</td>"
-                        f"<td>{h.get('mac','')}</td><td>{h.get('os_guess','')}</td>"
+            html.append(f"<tr><td>{h.get('ip', '')}</td><td>{h.get('hostname', '')}</td>"
+                        f"<td>{h.get('mac', '')}</td><td>{h.get('os_guess', '')}</td>"
                         f"<td>{port_str}</td></tr>")
         html.append("</table>")
     vulns = data.get("vulnerabilities", [])
@@ -155,9 +154,9 @@ def html_report(result, file=None, title="orcasec scan report"):
         html.append("<table><tr><th>severity</th><th>cve</th><th>host</th><th>description</th></tr>")
         for v in vulns:
             sev = v.get("severity", "").lower()
-            html.append(f"<tr><td class='{sev}'>{sev}</td><td>{v.get('cve_id','')}</td>"
-                        f"<td>{v.get('affected_host','')}</td>"
-                        f"<td>{v.get('description','')}</td></tr>")
+            html.append(f"<tr><td class='{sev}'>{sev}</td><td>{v.get('cve_id', '')}</td>"
+                        f"<td>{v.get('affected_host', '')}</td>"
+                        f"<td>{v.get('description', '')}</td></tr>")
         html.append("</table>")
     html.append("</body></html>")
     text = "\n".join(html)
@@ -183,7 +182,6 @@ def format_result(result, fmt="table", file=None):
 
 def main():
     """demo output formatters"""
-    from models import Host, Port, Vulnerability
     result = ScanResult(target="192.168.1.0/24", scan_type="demo")
     result.hosts = [
         Host(ip="192.168.1.1", hostname="router", mac="aa:bb:cc:dd:ee:ff",

@@ -7,7 +7,6 @@ import os
 import pickle
 import platform
 import sys
-import time
 from pathlib import Path
 
 import numpy as np

@@ -7,10 +7,8 @@ import sys
 import os
 
 from config import load_config, save_config, ensure_dirs
-from models import ScanResult
-from output import format_result
 from pipeline import discover_modules, load_module, Pipeline, build_pipeline
-from utils import setup_logging, colorize, is_admin
+from utils import setup_logging, colorize
 
 
 def get_module_descriptions():
@@ -97,13 +95,12 @@ def cmd_run(args, config):
 def cmd_scan(args, config):
     """run discovery + netscan + target pipeline"""
     target = args.target
-    fmt = args.format or config.get("output_format", "table")
     pipe = Pipeline(name="scan")
     pipe.add_stage("discovery", "discovery", args={"target": target} if target else {})
     pipe.add_stage("netscan", "netscan", required=False)
     pipe.add_stage("target", "target", required=False)
     print(f"running scan pipeline against {target or 'local network'}...")
-    results = pipe.run()
+    pipe.run()
     print(pipe.summary())
     return 0
 
@@ -116,7 +113,7 @@ def cmd_recon(args, config):
     pipe.add_stage("rec", "rec", required=False)
     pipe.add_stage("zone", "zone", required=False)
     print(f"running recon pipeline against {target or 'local network'}...")
-    results = pipe.run()
+    pipe.run()
     print(pipe.summary())
     return 0
 
@@ -130,7 +127,7 @@ def cmd_monitor(args, config):
         for mod in ["detect", "watch", "flow"]:
             pipe.add_stage(mod, mod, required=False)
     print("starting monitors...")
-    results = pipe.run()
+    pipe.run()
     print(pipe.summary())
     return 0
 
@@ -160,9 +157,9 @@ def cmd_pipeline(args, config):
     pipe = build_pipeline(stages)
     pipe.name = spec.get("name", os.path.basename(args.file))
     if args.parallel:
-        results = pipe.run_parallel(max_workers=args.workers)
+        pipe.run_parallel(max_workers=args.workers)
     else:
-        results = pipe.run()
+        pipe.run()
     print(pipe.summary())
     if args.output:
         with open(args.output, "w") as f:

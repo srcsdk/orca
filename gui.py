@@ -2,14 +2,12 @@
 """graphical interface for orcasec platform"""
 
 import json
-import os
-import sys
 import threading
 import tkinter as tk
-from tkinter import ttk, scrolledtext, filedialog, messagebox
+from tkinter import ttk, scrolledtext, filedialog
 
-from pipeline import discover_modules, load_module, Pipeline, build_pipeline
-from config import load_config, save_config
+from pipeline import discover_modules, load_module, build_pipeline
+from config import load_config
 
 
 class OrcaGui:

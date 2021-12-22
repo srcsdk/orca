@@ -220,7 +220,7 @@ def print_results(host, results):
               f"{product_str:<20} {vuln_str}")
 
     if total_vulns > 0:
-        print(f"\n--- vulnerabilities ---")
+        print("\n--- vulnerabilities ---")
         for r in results:
             for v in r["vulns"]:
                 sev = v["severity"].upper()

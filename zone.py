@@ -157,8 +157,8 @@ def dig_query(domain, rtype, server=None, timeout=5, retries=2):
             result = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=timeout + 2
             )
-            lines = [l.strip() for l in result.stdout.strip().split("\n")
-                     if l.strip()]
+            lines = [line.strip() for line in result.stdout.strip().split("\n")
+                     if line.strip()]
             if lines or attempt == retries:
                 return lines
             time.sleep(1)
@@ -197,7 +197,7 @@ def attempt_zone_transfer(domain, nameserver):
         if "Transfer failed" in result.stdout or "REFUSED" in result.stdout:
             return None
         lines = result.stdout.strip().split("\n")
-        records = [l for l in lines if l and not l.startswith(";")]
+        records = [line for line in lines if line and not line.startswith(";")]
         return records if records else None
     except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
         return None
@@ -353,7 +353,7 @@ def default_scan():
     if reverse:
         print(f"reverse dns: {reverse}")
 
-    print(f"\nresolving common dns servers...")
+    print("\nresolving common dns servers...")
     test_domains = ["dns.google", "one.one.one.one", "resolver1.opendns.com"]
     for domain in test_domains:
         try:
@@ -362,7 +362,7 @@ def default_scan():
         except socket.gaierror:
             print(f"  {domain} -> unresolvable")
 
-    print(f"\nlocal dns resolution test:")
+    print("\nlocal dns resolution test:")
     test_hosts = ["localhost", "google.com", "github.com"]
     for host in test_hosts:
         try:
@@ -428,7 +428,7 @@ def main():
                         print(f"    {line}")
                     break
                 else:
-                    print(f"  failed (transfer refused or timeout)")
+                    print("  failed (transfer refused or timeout)")
 
     # subdomain brute force
     if args.wordlist:

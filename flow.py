@@ -10,7 +10,7 @@ import signal
 import subprocess
 import sys
 import time
-from collections import defaultdict, Counter
+from collections import Counter
 from datetime import datetime
 
 
@@ -145,17 +145,17 @@ class FlowTracker:
     def print_stats(self):
         """display flow analysis"""
         s = self.stats()
-        print(f"\n--- flow summary ---")
+        print("\n--- flow summary ---")
         print(f"active flows:  {s['active_flows']}")
         print(f"total packets: {s['total_packets']}")
 
-        print(f"\nprotocols:")
+        print("\nprotocols:")
         total = sum(s["protocols"].values())
         for proto, count in s["protocols"].items():
             pct = count / max(total, 1) * 100
             print(f"  {proto:<8} {count:>8} ({pct:.1f}%)")
 
-        print(f"\ntop destination ports:")
+        print("\ntop destination ports:")
         for port, count in list(s["top_ports"].items())[:10]:
             svc = ""
             try:
@@ -165,14 +165,14 @@ class FlowTracker:
                 pass
             print(f"  {port:>6}  {count:>8}  {svc}")
 
-        print(f"\ntop flows:")
+        print("\ntop flows:")
         for flow in s["top_flows"][:5]:
             print(f"  {flow['src_ip']}:{flow['src_port']} -> "
                   f"{flow['dst_ip']}:{flow['dst_port']} "
                   f"{flow['proto']} {flow['packets']} pkts "
                   f"({flow['duration']}s)")
 
-        print(f"\ntop conversations:")
+        print("\ntop conversations:")
         for key, conv in self.top_conversations(5):
             total = conv["forward"] + conv["reverse"]
             ratio = conv["forward"] / max(conv["reverse"], 1)

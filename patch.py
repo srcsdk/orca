@@ -8,7 +8,6 @@ import platform
 import re
 import stat
 import subprocess
-import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -292,8 +291,8 @@ class PackageAuditor:
                 ["apt", "list", "--upgradable"],
                 capture_output=True, text=True, timeout=30
             )
-            lines = [l for l in result.stdout.strip().split("\n")
-                     if "upgradable" in l.lower()]
+            lines = [ln for ln in result.stdout.strip().split("\n")
+                     if "upgradable" in ln.lower()]
             if lines:
                 self.add("apt_updates", "warn",
                          f"{len(lines)} packages have updates available")
@@ -311,7 +310,7 @@ class PackageAuditor:
                 ["dnf", "check-update", "-q"],
                 capture_output=True, text=True, timeout=60
             )
-            lines = [l for l in result.stdout.strip().split("\n") if l.strip()]
+            lines = [ln for ln in result.stdout.strip().split("\n") if ln.strip()]
             if lines:
                 self.add("dnf_updates", "warn",
                          f"{len(lines)} packages have updates available")
@@ -326,7 +325,7 @@ class PackageAuditor:
                 ["pacman", "-Qu"],
                 capture_output=True, text=True, timeout=30
             )
-            lines = [l for l in result.stdout.strip().split("\n") if l.strip()]
+            lines = [ln for ln in result.stdout.strip().split("\n") if ln.strip()]
             if lines:
                 self.add("pacman_updates", "warn",
                          f"{len(lines)} packages have updates available")
@@ -342,7 +341,7 @@ class PackageAuditor:
                 ["brew", "outdated"],
                 capture_output=True, text=True, timeout=60
             )
-            lines = [l for l in result.stdout.strip().split("\n") if l.strip()]
+            lines = [ln for ln in result.stdout.strip().split("\n") if ln.strip()]
             if lines:
                 self.add("brew_updates", "warn",
                          f"{len(lines)} brew packages have updates")
@@ -362,9 +361,9 @@ class PackageAuditor:
                 capture_output=True, text=True, timeout=60
             )
             lines = result.stdout.strip().split("\n")
-            upgrade_lines = [l for l in lines
-                             if l.strip() and not l.startswith("-")
-                             and not l.startswith("Name")]
+            upgrade_lines = [ln for ln in lines
+                             if ln.strip() and not ln.startswith("-")
+                             and not ln.startswith("Name")]
             count = max(0, len(upgrade_lines) - 1)
             if count > 0:
                 self.add("winget_updates", "warn",

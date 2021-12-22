@@ -4,15 +4,12 @@ __version__ = "1.1.0"
 
 import argparse
 import json
-import os
 import platform
-import re
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections import deque
 from html.parser import HTMLParser
 
 
@@ -279,7 +276,7 @@ def print_usage_demo():
     print()
     os_name = platform.system()
     print(f"platform: {os_name}")
-    print(f"uses urllib (cross-platform, no external dependencies)")
+    print("uses urllib (cross-platform, no external dependencies)")
 
 
 def main():

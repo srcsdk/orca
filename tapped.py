@@ -11,7 +11,6 @@ import signal
 import subprocess
 import sys
 import time
-from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
@@ -506,7 +505,7 @@ def main():
         pass
 
     stats = monitor.stats()
-    print(f"\n--- monitor summary ---")
+    print("\n--- monitor summary ---")
     print(f"processes tracked: {stats['tracked_processes']}")
     print(f"alerts raised:     {stats['total_alerts']}")
 

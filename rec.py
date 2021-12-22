@@ -9,7 +9,6 @@ import re
 import socket
 import ssl
 import sys
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # protocol-specific probes
@@ -84,7 +83,7 @@ def get_ssl_info(host, port, timeout=3):
 
         if not cert:
             # get cert info from binary form
-            der_cert = wrapped.getpeercert(binary_form=True)
+            wrapped.getpeercert(binary_form=True)
             return {
                 "tls_version": version,
                 "cipher": cipher[0] if cipher else None,

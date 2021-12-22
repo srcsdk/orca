@@ -3,12 +3,9 @@
 
 import argparse
 import json
-import os
 import platform
 import subprocess
 import sys
-import time
-from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
@@ -335,7 +332,7 @@ BUILTIN_PLAYBOOKS = {
 def _show_status():
     """show available modules, playbooks, and platform info"""
     os_name = platform.system()
-    print(f"[conductor] security orchestration engine")
+    print("[conductor] security orchestration engine")
     print(f"[conductor] platform: {os_name} {platform.release()}")
     print(f"[conductor] python: {platform.python_version()}")
     print()

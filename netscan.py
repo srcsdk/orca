@@ -186,7 +186,7 @@ def main():
         args.host = "127.0.0.1"
         if args.top is None:
             args.top = 100
-        print(f"no target specified, scanning localhost top 100 ports")
+        print("no target specified, scanning localhost top 100 ports")
 
     if args.threads is None:
         args.threads = get_default_threads()

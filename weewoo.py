@@ -502,11 +502,11 @@ def main():
         pass
 
     stats = ids.stats()
-    print(f"\n--- ids summary ---")
+    print("\n--- ids summary ---")
     print(f"packets: {stats['total_packets']}")
     print(f"alerts:  {stats['total_alerts']}")
     if stats["high_risk"]:
-        print(f"high risk sources:")
+        print("high risk sources:")
         for ip, score in stats["high_risk"].items():
             print(f"  {ip}: score {score}")
 

@@ -11,7 +11,6 @@ import sys
 import time
 from collections import defaultdict, deque
 from datetime import datetime
-from pathlib import Path
 
 PLATFORM = platform.system().lower()
 
@@ -237,7 +236,7 @@ class RuleManager:
             return False
         if ip in self.blocked:
             return False
-        success = self.firewall.block_ip(ip)
+        self.firewall.block_ip(ip)
         self.blocked[ip] = {
             "reason": reason,
             "timestamp": datetime.now().isoformat(),

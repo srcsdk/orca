@@ -8,9 +8,7 @@ import platform
 import re
 import socket
 import ssl
-import subprocess
-import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 
@@ -236,8 +234,8 @@ class TlsAuditor:
                 ctx.minimum_version = version
                 ctx.maximum_version = version
             with socket.create_connection((host, port), timeout=5) as sock:
-                with ctx.wrap_socket(sock, server_hostname=host) as ssock:
-                    return True
+                ctx.wrap_socket(sock, server_hostname=host).close()
+                return True
         except (ssl.SSLError, OSError):
             return False
 
@@ -336,7 +334,7 @@ def _detect_tls_configs():
 def _default_scan():
     """scan localhost tls and any detected config files"""
     os_name = platform.system()
-    print(f"[downseek] tls auditor")
+    print("[downseek] tls auditor")
     print(f"[downseek] platform: {os_name} {platform.release()}")
     print()
 

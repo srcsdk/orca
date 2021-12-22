@@ -7,10 +7,8 @@ import json
 import os
 import platform
 import signal
-import struct
 import subprocess
 import sys
-import time
 from collections import defaultdict, Counter
 from datetime import datetime
 
@@ -131,23 +129,23 @@ class PacketAnalyzer:
     def print_stats(self):
         """display analysis results"""
         s = self.stats()
-        print(f"\n--- capture summary ---")
+        print("\n--- capture summary ---")
         print(f"total packets: {s['total_packets']}")
 
-        print(f"\nprotocols:")
+        print("\nprotocols:")
         for proto, count in s["protocols"].items():
             pct = count / s["total_packets"] * 100
             print(f"  {proto:<8} {count:>6} ({pct:.1f}%)")
 
-        print(f"\ntop sources:")
+        print("\ntop sources:")
         for src, count in list(s["top_sources"].items())[:5]:
             print(f"  {src:<30} {count}")
 
-        print(f"\ntop destinations:")
+        print("\ntop destinations:")
         for dst, count in list(s["top_destinations"].items())[:5]:
             print(f"  {dst:<30} {count}")
 
-        print(f"\ntop conversations:")
+        print("\ntop conversations:")
         for conv in s["top_conversations"][:5]:
             pair = " <-> ".join(conv["pair"])
             print(f"  {pair:<40} {conv['packets']}")

@@ -4,13 +4,9 @@
 import argparse
 import csv
 import json
-import os
 import pickle
 import platform
 import sys
-import time
-from collections import defaultdict
-from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -412,7 +408,7 @@ def main():
 
         eval_report = detector.evaluate(flows)
         if eval_report:
-            print(f"\n[probaduce] evaluation:")
+            print("\n[probaduce] evaluation:")
             print(json.dumps(eval_report, indent=2))
 
         detector.save(args.model_file)

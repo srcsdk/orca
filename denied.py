@@ -3,16 +3,12 @@
 
 import argparse
 import json
-import logging
-import os
 import platform
 import re
-import sys
 import time
 from collections import defaultdict
 from datetime import datetime
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import unquote, parse_qs, urlparse
+from urllib.parse import unquote
 
 PLATFORM = platform.system().lower()
 
@@ -213,7 +209,7 @@ def analyze_log_file(log_path, analyzer):
 
 def run_self_test(analyzer):
     """run waf self-test with common attack payloads"""
-    print(f"web application firewall - self-test")
+    print("web application firewall - self-test")
     print(f"platform: {PLATFORM}")
     print(f"loaded {len(analyzer.engine.rules)} rules\n")
 
@@ -279,7 +275,7 @@ def main():
         if allowed:
             print("request allowed")
         else:
-            print(f"request blocked:")
+            print("request blocked:")
             for rule in entry["rules_matched"]:
                 print(f"  [{rule['severity']}] {rule['name']} "
                       f"({rule['category']})")

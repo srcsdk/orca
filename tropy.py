@@ -4,14 +4,10 @@
 import argparse
 import json
 import math
-import os
 import platform
 import re
-import socket
-import struct
 import subprocess
 import sys
-import time
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -362,7 +358,7 @@ def print_report(report, as_json=False):
         print(json.dumps(report, indent=2))
         return
 
-    print(f"\n[tropy] dlp scan results")
+    print("\n[tropy] dlp scan results")
     print(f"total alerts: {report['total_alerts']}")
     print(f"severity: {report['severity_counts']}")
     print()
