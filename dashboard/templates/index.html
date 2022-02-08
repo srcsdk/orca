@@ -1,0 +1,51 @@
+<!doctype html>
+<html>
+<head>
+    <title>orca security dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header>
+        <h1>orca security dashboard</h1>
+        <span id="timestamp"></span>
+    </header>
+    <main>
+        <section id="system-status">
+            <h2>system status</h2>
+            <div class="status-grid">
+                <div class="status-item">
+                    <label>hostname</label>
+                    <span id="hostname">loading...</span>
+                </div>
+                <div class="status-item">
+                    <label>os</label>
+                    <span id="os-info">loading...</span>
+                </div>
+                <div class="status-item">
+                    <label>modules</label>
+                    <span id="module-count">0</span>
+                </div>
+            </div>
+        </section>
+        <section id="scan-results">
+            <h2>recent scans</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>date</th>
+                        <th>module</th>
+                        <th>status</th>
+                        <th>findings</th>
+                    </tr>
+                </thead>
+                <tbody id="scan-table">
+                </tbody>
+            </table>
+        </section>
+        <section id="modules">
+            <h2>available modules</h2>
+            <div id="module-list"></div>
+        </section>
+    </main>
+</body>
+</html>
