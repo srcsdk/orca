@@ -1,0 +1,79 @@
+/* orca dashboard - minimal dark theme */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: monospace;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    padding: 20px;
+}
+
+header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 0;
+    border-bottom: 1px solid #333;
+    margin-bottom: 20px;
+}
+
+h1 {
+    font-size: 1.4em;
+    color: #00d4aa;
+}
+
+h2 {
+    font-size: 1.1em;
+    color: #888;
+    margin-bottom: 10px;
+}
+
+section {
+    margin-bottom: 30px;
+}
+
+.status-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 10px;
+}
+
+.status-item {
+    background: #16213e;
+    padding: 12px;
+    border-radius: 4px;
+}
+
+.status-item label {
+    display: block;
+    font-size: 0.8em;
+    color: #666;
+    margin-bottom: 4px;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th, td {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid #2a2a4a;
+}
+
+th {
+    color: #888;
+    font-size: 0.85em;
+}
+
+#module-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 8px;
+}
