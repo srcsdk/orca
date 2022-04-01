@@ -2,7 +2,6 @@
 """basic port scanning for network reconnaissance"""
 
 import socket
-from collections import defaultdict
 
 
 COMMON_PORTS = {
