@@ -99,5 +99,5 @@ if __name__ == "__main__":
               f"{p['memory_kb']} kb")
     listeners = check_listeners()
     print(f"\nlistening ports: {len(listeners)}")
-    for l in listeners[:5]:
-        print(f"  port {l['port']}")
+    for ln in listeners[:5]:
+        print(f"  port {ln['port']}")
