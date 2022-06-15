@@ -1,100 +1,103 @@
 #!/usr/bin/env python3
-"""combined report generator for all orca modules"""
+"""security report generation"""
 
 import json
 import os
-from datetime import datetime
 
 
-def generate_report(scan_results, output_format="text"):
-    """generate combined security report from module results."""
-    report = {
-        "timestamp": datetime.now().isoformat(),
-        "summary": summarize(scan_results),
-        "modules": scan_results,
-    }
-    if output_format == "json":
-        return json.dumps(report, indent=2)
-    return format_text_report(report)
+class SecurityReport:
+    """generate formatted security assessment reports."""
 
+    def __init__(self):
+        self.sections = []
+        self.findings = []
+        self.metadata = {}
 
-def summarize(scan_results):
-    """create summary statistics from scan results."""
-    total_findings = 0
-    by_severity = {"critical": 0, "high": 0, "medium": 0, "low": 0}
-    for module_name, results in scan_results.items():
-        findings = results.get("findings", [])
-        total_findings += len(findings)
-        for finding in findings:
-            sev = finding.get("severity", "low").lower()
-            by_severity[sev] = by_severity.get(sev, 0) + 1
-    score = 100
-    score -= by_severity["critical"] * 20
-    score -= by_severity["high"] * 10
-    score -= by_severity["medium"] * 5
-    score -= by_severity["low"] * 1
-    return {
-        "total_findings": total_findings,
-        "by_severity": by_severity,
-        "security_score": max(0, score),
-        "modules_scanned": len(scan_results),
-    }
+    def set_metadata(self, target="", scan_type="full"):
+        """set report metadata."""
+        self.metadata = {
+            "target": target,
+            "scan_type": scan_type,
+        }
 
+    def add_finding(self, title, severity, description, remediation=""):
+        """add a security finding."""
+        self.findings.append({
+            "title": title,
+            "severity": severity,
+            "description": description,
+            "remediation": remediation,
+        })
 
-def format_text_report(report):
-    """format report as readable text."""
-    lines = [
-        "=" * 50,
-        "orca security report",
-        f"generated: {report['timestamp']}",
-        "=" * 50,
-        "",
-        f"security score: {report['summary']['security_score']}/100",
-        f"total findings: {report['summary']['total_findings']}",
-        "",
-    ]
-    sev = report["summary"]["by_severity"]
-    lines.append("severity breakdown:")
-    for level in ["critical", "high", "medium", "low"]:
-        count = sev.get(level, 0)
-        if count > 0:
-            lines.append(f"  {level}: {count}")
-    lines.append("")
-    for module_name, results in report["modules"].items():
-        lines.append(f"--- {module_name} ---")
-        for finding in results.get("findings", []):
-            lines.append(
-                f"  [{finding.get('severity', 'info')}] "
-                f"{finding.get('description', '')}"
-            )
+    def add_section(self, title, content):
+        """add a report section."""
+        self.sections.append({"title": title, "content": content})
+
+    def severity_summary(self):
+        """summarize findings by severity."""
+        counts = {}
+        for f in self.findings:
+            sev = f["severity"]
+            counts[sev] = counts.get(sev, 0) + 1
+        return counts
+
+    def to_text(self):
+        """generate text format report."""
+        lines = ["security assessment report", "=" * 40]
+        for key, val in self.metadata.items():
+            lines.append(f"  {key}: {val}")
         lines.append("")
-    return "\n".join(lines)
+        summary = self.severity_summary()
+        lines.append("findings summary:")
+        for sev in ["critical", "high", "medium", "low", "info"]:
+            count = summary.get(sev, 0)
+            if count:
+                lines.append(f"  {sev}: {count}")
+        lines.append("")
+        for section in self.sections:
+            lines.append(f"--- {section['title']} ---")
+            lines.append(section["content"])
+            lines.append("")
+        if self.findings:
+            lines.append("--- findings ---")
+            for i, f in enumerate(self.findings, 1):
+                lines.append(
+                    f"  {i}. [{f['severity'].upper()}] {f['title']}"
+                )
+                lines.append(f"     {f['description']}")
+                if f["remediation"]:
+                    lines.append(f"     fix: {f['remediation']}")
+                lines.append("")
+        return "\n".join(lines)
 
+    def to_json(self):
+        """generate json format report."""
+        return json.dumps({
+            "metadata": self.metadata,
+            "summary": self.severity_summary(),
+            "sections": self.sections,
+            "findings": self.findings,
+        }, indent=2)
 
-def save_report(report_text, output_dir=None, filename=None):
-    """save report to file."""
-    if output_dir is None:
-        output_dir = os.path.dirname(os.path.dirname(__file__))
-    if filename is None:
-        filename = f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-    path = os.path.join(output_dir, filename)
-    with open(path, "w") as f:
-        f.write(report_text)
-    return path
+    def save(self, filepath, fmt="text"):
+        """save report to file."""
+        content = self.to_text() if fmt == "text" else self.to_json()
+        with open(filepath, "w") as f:
+            f.write(content)
 
 
 if __name__ == "__main__":
-    sample = {
-        "netscan": {
-            "findings": [
-                {"severity": "high", "description": "port 23 (telnet) open"},
-                {"severity": "medium", "description": "port 80 unencrypted"},
-            ]
-        },
-        "passwd": {
-            "findings": [
-                {"severity": "critical", "description": "weak root password"},
-            ]
-        },
-    }
-    print(generate_report(sample))
+    report = SecurityReport()
+    report.set_metadata(target="192.168.1.0/24", scan_type="network")
+    report.add_section("scope", "internal network scan of 254 hosts")
+    report.add_finding(
+        "ssh with password auth enabled", "medium",
+        "host 192.168.1.10 allows ssh password authentication",
+        "disable password auth in sshd_config",
+    )
+    report.add_finding(
+        "outdated ssl certificate", "high",
+        "host 192.168.1.20 has expired ssl certificate",
+        "renew certificate and update server config",
+    )
+    print(report.to_text())
