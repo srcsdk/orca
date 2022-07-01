@@ -2,7 +2,6 @@
 """security report generation"""
 
 import json
-import os
 
 
 class SecurityReport:

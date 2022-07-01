@@ -23,7 +23,6 @@ def check_certificate(hostname, port=443, timeout=5):
 def _parse_cert(cert, hostname):
     """parse certificate details."""
     not_after = cert.get("notAfter", "")
-    not_before = cert.get("notBefore", "")
     try:
         expiry = datetime.datetime.strptime(
             not_after, "%b %d %H:%M:%S %Y %Z"

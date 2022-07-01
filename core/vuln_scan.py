@@ -47,11 +47,11 @@ def check_exposed_secrets(directory, extensions=None):
     if extensions is None:
         extensions = [".py", ".js", ".json", ".yml", ".yaml", ".cfg", ".ini"]
     patterns = [
-        (r"(?:password|passwd|pwd)\s*[=:]\s*['"][^'"]+['"]",
+        (r"""(?:password|passwd|pwd)\s*[=:]\s*['"][^'"]+['"]""",
          "hardcoded password"),
-        (r"(?:api_key|apikey|api-key)\s*[=:]\s*['"][^'"]+['"]",
+        (r"""(?:api_key|apikey|api-key)\s*[=:]\s*['"][^'"]+['"]""",
          "hardcoded api key"),
-        (r"(?:secret|token)\s*[=:]\s*['"][A-Za-z0-9+/=]{20,}['"]",
+        (r"""(?:secret|token)\s*[=:]\s*['"][A-Za-z0-9+/=]{20,}['"]""",
          "hardcoded secret or token"),
         (r"-----BEGIN (?:RSA )?PRIVATE KEY-----",
          "embedded private key"),
