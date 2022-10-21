@@ -77,8 +77,10 @@ class SecretScanner:
                         if len(val) > 8 and not val.startswith("${"):
                             sensitive = any(
                                 w in key.upper()
-                                for w in ["SECRET", "PASSWORD", "TOKEN",
-                                           "KEY", "PRIVATE"]
+                                for w in [
+                                    "SECRET", "PASSWORD", "TOKEN",
+                                    "KEY", "PRIVATE",
+                                ]
                             )
                             if sensitive:
                                 findings.append({
