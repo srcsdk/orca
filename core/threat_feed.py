@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """threat intelligence feed aggregation"""
 
-import json
 import time
 import hashlib
 from collections import defaultdict

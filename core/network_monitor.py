@@ -3,7 +3,6 @@
 
 import subprocess
 import time
-import re
 from collections import defaultdict
 
 
@@ -56,8 +55,10 @@ class NetworkMonitor:
         """get interface traffic statistics."""
         stats_path = f"/sys/class/net/{self.interface}/statistics"
         stats = {}
-        for metric in ["rx_bytes", "tx_bytes", "rx_packets", "tx_packets",
-                        "rx_errors", "tx_errors"]:
+        for metric in [
+            "rx_bytes", "tx_bytes", "rx_packets", "tx_packets",
+            "rx_errors", "tx_errors",
+        ]:
             path = f"{stats_path}/{metric}"
             try:
                 with open(path) as f:
