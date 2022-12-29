@@ -36,5 +36,3 @@ orcasec-spider --url https://example.com
 ### modules
 
 conductor, containok, denied, detect, discovery, dnsguard, downseek, flow, gnore, icu, logma, netscan, nvd, over, patch, poison, probaduce, prodsec, rec, res, sike, spider, supertect, tapped, target, tropy, vaded, watch, weewoo, zone
-
-https://github.com/srcsdk/cybersec
