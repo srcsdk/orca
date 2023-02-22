@@ -191,8 +191,8 @@ class Pipeline:
         return {
             "name": self.name,
             "stages": [{"name": s.name, "module": s.module_name,
-                         "function": s.function, "args": s.args}
-                        for s in self.stages],
+                        "function": s.function, "args": s.args}
+                       for s in self.stages],
             "results": self.results,
             "duration": self.end_time - self.start_time if self.end_time else 0,
         }

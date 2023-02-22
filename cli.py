@@ -29,7 +29,7 @@ def get_module_descriptions():
         "defense": {
             "description": "defense and response",
             "modules": ["denied", "10fthigher", "logma", "supertect", "conductor",
-                         "tropy", "res"],
+                        "tropy", "res"],
         },
         "adversary": {
             "description": "adversary simulation and testing",

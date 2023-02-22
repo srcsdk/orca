@@ -84,7 +84,7 @@ class TlsAuditor:
                     self.add_finding("high", "ciphers", f"weak cipher enabled: {weak}")
 
         if re.search(r'ssl_prefer_server_ciphers\s+on|SSLHonorCipherOrder\s+on',
-                      content, re.IGNORECASE):
+                     content, re.IGNORECASE):
             self.add_finding("info", "ciphers", "server cipher preference enabled")
         else:
             self.add_finding("medium", "ciphers", "server cipher preference not enabled")

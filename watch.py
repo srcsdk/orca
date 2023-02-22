@@ -271,7 +271,7 @@ def main():
 
     if args.csv and monitor.alerts:
         fieldnames = ["timestamp", "type", "severity", "ip", "mac",
-                       "expected", "observed"]
+                      "expected", "observed"]
         with open(args.csv, "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames,
                                     extrasaction="ignore")

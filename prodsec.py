@@ -337,7 +337,7 @@ class CisBenchmark:
         passwd = Path("/etc/passwd")
         if passwd.exists():
             uid0 = [ln.split(":")[0] for ln in passwd.read_text().splitlines()
-                     if ln.split(":")[2] == "0" if len(ln.split(":")) > 2]
+                    if ln.split(":")[2] == "0" if len(ln.split(":")) > 2]
             if len(uid0) == 1:
                 self.add_check("pass", "6.2.5", "only root has uid 0")
             else:
@@ -402,7 +402,7 @@ class CisBenchmark:
                 content = sudoers.read_text()
                 if "NOPASSWD" in content:
                     nopasswd_lines = [ln.strip() for ln in content.splitlines()
-                                       if "NOPASSWD" in ln and not ln.strip().startswith("#")]
+                                      if "NOPASSWD" in ln and not ln.strip().startswith("#")]
                     if nopasswd_lines:
                         self.add_check("warn", "priv.1",
                                        f"{len(nopasswd_lines)} NOPASSWD sudo rules",

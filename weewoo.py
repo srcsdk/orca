@@ -252,7 +252,7 @@ class IDS:
             "total_alerts": len(self.alert_mgr.alerts),
             "high_risk": self.alert_mgr.get_high_risk_sources(),
             "rule_hits": {r.msg: r.hit_count for r in self.rules
-                         if r.hit_count > 0},
+                          if r.hit_count > 0},
         }
 
 

@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """flask web server for orca security dashboard and installer"""
 
-import json
 import os
 import sys
 
-from flask import Flask, jsonify, render_template, send_from_directory
+from flask import Flask, jsonify, render_template
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 

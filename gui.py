@@ -30,13 +30,13 @@ class OrcaGui:
         style.theme_use("clam")
         style.configure("TNotebook", background="#1a1a2e")
         style.configure("TNotebook.Tab", background="#16213e", foreground="#e0e0e0",
-                         padding=[10, 4])
+                        padding=[10, 4])
         style.map("TNotebook.Tab", background=[("selected", "#0f3460")])
         style.configure("TFrame", background="#1a1a2e")
         style.configure("TLabel", background="#1a1a2e", foreground="#e0e0e0")
         style.configure("TButton", background="#0f3460", foreground="#e0e0e0")
         style.configure("Treeview", background="#16213e", foreground="#e0e0e0",
-                         fieldbackground="#16213e")
+                        fieldbackground="#16213e")
         style.configure("Treeview.Heading", background="#0f3460", foreground="#00d4ff")
 
     def _build_ui(self):
@@ -54,12 +54,12 @@ class OrcaGui:
         tree_frame = ttk.Frame(frame)
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         self.module_tree = ttk.Treeview(tree_frame, columns=("description",),
-                                         show="headings", height=15)
+                                        show="headings", height=15)
         self.module_tree.heading("#0", text="module")
         self.module_tree.heading("description", text="description")
         self.module_tree.column("description", width=500)
         scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL,
-                                   command=self.module_tree.yview)
+                                  command=self.module_tree.yview)
         self.module_tree.configure(yscrollcommand=scrollbar.set)
         self.module_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -76,7 +76,7 @@ class OrcaGui:
         frame = ttk.Frame(notebook)
         notebook.add(frame, text="pipeline")
         self.pipeline_list = tk.Listbox(frame, bg="#16213e", fg="#e0e0e0",
-                                         selectbackground="#0f3460", height=10)
+                                        selectbackground="#0f3460", height=10)
         self.pipeline_list.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         btn_frame = ttk.Frame(frame)
         btn_frame.pack(fill=tk.X, padx=5, pady=5)
@@ -93,9 +93,9 @@ class OrcaGui:
         output_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         ttk.Label(output_frame, text="output").pack(anchor=tk.W)
         self.output = scrolledtext.ScrolledText(output_frame, height=12,
-                                                 bg="#0a0a1a", fg="#00ff88",
-                                                 font=("Courier", 10),
-                                                 insertbackground="#00ff88")
+                                                bg="#0a0a1a", fg="#00ff88",
+                                                font=("Courier", 10),
+                                                insertbackground="#00ff88")
         self.output.pack(fill=tk.BOTH, expand=True)
         btn_frame = ttk.Frame(output_frame)
         btn_frame.pack(fill=tk.X, pady=2)
@@ -195,7 +195,7 @@ class OrcaGui:
         if not self.pipeline_stages:
             return
         path = filedialog.asksaveasfilename(defaultextension=".json",
-                                             filetypes=[("json", "*.json")])
+                                            filetypes=[("json", "*.json")])
         if path:
             with open(path, "w") as f:
                 json.dump({"name": "custom", "stages": self.pipeline_stages}, f, indent=2)
@@ -229,7 +229,7 @@ class OrcaGui:
     def _save_output(self):
         """save output to file"""
         path = filedialog.asksaveasfilename(defaultextension=".txt",
-                                             filetypes=[("text", "*.txt"), ("all", "*.*")])
+                                            filetypes=[("text", "*.txt"), ("all", "*.*")])
         if path:
             with open(path, "w") as f:
                 f.write(self.output.get("1.0", tk.END))

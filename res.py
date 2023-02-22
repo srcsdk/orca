@@ -84,11 +84,11 @@ class IncidentResponse:
         self.evidence.log("collecting system information")
 
         self.evidence.save("system/platform.txt",
-                          f"system: {platform.system()}\n"
-                          f"release: {platform.release()}\n"
-                          f"version: {platform.version()}\n"
-                          f"machine: {platform.machine()}\n"
-                          f"node: {platform.node()}\n")
+                           f"system: {platform.system()}\n"
+                           f"release: {platform.release()}\n"
+                           f"version: {platform.version()}\n"
+                           f"machine: {platform.machine()}\n"
+                           f"node: {platform.node()}\n")
 
         if self.os_type in ("linux", "darwin"):
             self._collect_unix_system()
