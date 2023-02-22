@@ -77,3 +77,29 @@ th {
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: 8px;
 }
+
+.install-box {
+    background: #16213e;
+    padding: 16px;
+    border-radius: 4px;
+}
+
+.install-box p {
+    color: #888;
+    margin-bottom: 6px;
+    margin-top: 12px;
+}
+
+.install-box p:first-child {
+    margin-top: 0;
+}
+
+.install-cmd {
+    display: block;
+    background: #0f1a2e;
+    padding: 10px 14px;
+    border-radius: 3px;
+    color: #00d4aa;
+    font-size: 0.95em;
+    user-select: all;
+}

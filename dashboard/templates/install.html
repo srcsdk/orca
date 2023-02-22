@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+<head>
+    <title>orca - install</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header>
+        <h1>orca security platform</h1>
+    </header>
+    <main>
+        <section>
+            <h2>detected system</h2>
+            <div class="status-grid">
+                <div class="status-item">
+                    <label>os</label>
+                    <span>{{ platform.get('distro', platform.system) }}</span>
+                </div>
+                <div class="status-item">
+                    <label>architecture</label>
+                    <span>{{ platform.arch }}</span>
+                </div>
+                <div class="status-item">
+                    <label>package manager</label>
+                    <span>{{ platform.get('pkg_manager', 'unknown') }}</span>
+                </div>
+            </div>
+        </section>
+        <section>
+            <h2>install</h2>
+            <div class="install-box">
+                <p>one command install:</p>
+                <code class="install-cmd">curl -fsSL https://raw.githubusercontent.com/srcsdk/cybersec/master/install.sh | sh</code>
+                <p>or with pip:</p>
+                <code class="install-cmd">pip install orcasec</code>
+            </div>
+        </section>
+    </main>
+</body>
+</html>
